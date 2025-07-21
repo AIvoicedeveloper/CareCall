@@ -1,0 +1,81 @@
+# Prompt
+
+Create a Next.js application using TypeScript that connects to an existing Supabase database. The database schema is already set up (provided separately) and includes four main tables: `users`, `patients`, `calls`, and `symptom_reports`.
+
+This app is a web UI for a healthcare follow-up system. It should contain the following pages:
+
+---
+
+## `/dashboard`: Follow-up Overview
+
+Display:
+- Recent calls (latest 10), showing patient name, call time, risk level, and status
+- Upcoming follow-ups: patients with no recent call in the past X days
+- Statistics summary: number of calls, number escalated, average risk level
+- (Optional) Simple chart visualizing call volume over time
+
+Use components from a modern dashboard UI library such as `@mui/material` or `chakra-ui`.
+
+---
+
+## `/alerts`: High-Risk Cases
+
+Display:
+- All `symptom_reports` where `risk_level = 'high'` or `escalate = true`
+- Include patient name, reported symptoms, call date, and notes
+- Allow filtering by date or escalation status
+- Use a clean, readable table layout
+
+This page is used by medical staff to triage and prioritize follow-up actions.
+
+---
+
+## `/patients/[id]`: Patient Profile
+
+Dynamic route to show:
+- Patient info: full name, condition type, assigned doctor
+- Call history: list of past calls with status, summary, and transcript
+- Symptom history: timeline or list of symptoms reported per call
+- Consider using tabs or cards to separate sections
+
+Fetch data from `patients`, `calls`, and `symptom_reports` tables. Ensure proper loading states and error handling.
+
+---
+
+## `/settings`: Templates & Rules
+
+Admin-only page to manage:
+- Call script templates (can be static JSON or loaded from DB later)
+- Scheduling configuration: follow-up intervals, available days/times
+- Escalation rules: define what symptoms or risk levels should trigger `escalate = true`
+
+Use simple form components for this page. No need to implement persistence yet — placeholder UI is sufficient.
+
+---
+
+## Tech Notes
+
+- Use Supabase client library (`@supabase/supabase-js`) to fetch data
+- Ensure strong typing with TypeScript across the entire project
+- Use a modern dashboard layout with sidebar navigation and topbar
+- Use TailwindCSS or another clean, consistent styling system
+- Protect PHI:
+  - Do not log any sensitive data
+  - Limit data access based on user role (e.g. `doctor`, `admin`, `staff`)
+  - Use access-controlled API calls or Supabase RLS where possible
+
+---
+
+## Roles
+
+Use Supabase Auth to manage the following roles:
+- `admin`: full access to all pages and settings
+- `doctor`: view only their assigned patients
+- `staff`: view dashboard and alerts, but not `/settings`
+
+---
+
+## Final Output
+
+The result should be a production-ready scaffolded app that connects to the existing Supabase instance, supports navigation across all four pages, and demonstrates good UX/UI practices with full TypeScript coverage and basic PHI compliance.
+
