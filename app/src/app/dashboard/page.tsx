@@ -12,6 +12,7 @@ import {
   Tooltip,
   Legend,
 } from "chart.js";
+import { useAuth } from "../authProvider";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
@@ -45,7 +46,20 @@ export default function DashboardPage() {
   const [loadingVolume, setLoadingVolume] = useState(true);
   const [errorVolume, setErrorVolume] = useState("");
 
+  const { user } = useAuth();
+
   useEffect(() => {
+    if (!user) {
+      setCalls([]);
+      setUpcoming([]);
+      setStats(null);
+      setVolumeData(null);
+      setLoading(false);
+      setLoadingUpcoming(false);
+      setLoadingStats(false);
+      setLoadingVolume(false);
+      return;
+    }
     const fetchCalls = async () => {
       setLoading(true);
       setError("");
@@ -70,7 +84,7 @@ export default function DashboardPage() {
     };
     fetchCalls();
 
-    // Fetch patients with no call in the last 7 days
+    // Revert: Fetch all patients and all recent calls, then filter in JS
     const fetchUpcoming = async () => {
       setLoadingUpcoming(true);
       setErrorUpcoming("");
@@ -104,7 +118,7 @@ export default function DashboardPage() {
     };
     fetchUpcoming();
 
-    // Fetch statistics summary
+    // Revert: Fetch all relevant symptom reports and process in JS
     const fetchStats = async () => {
       setLoadingStats(true);
       setErrorStats("");
@@ -143,7 +157,7 @@ export default function DashboardPage() {
     };
     fetchStats();
 
-    // Fetch call volume for last 7 days
+    // Revert: Fetch all calls in last 7 days and group in JS
     const fetchVolume = async () => {
       setLoadingVolume(true);
       setErrorVolume("");
@@ -175,7 +189,7 @@ export default function DashboardPage() {
       setLoadingVolume(false);
     };
     fetchVolume();
-  }, []);
+  }, [user]);
 
   return (
     <ProtectedRoute>
