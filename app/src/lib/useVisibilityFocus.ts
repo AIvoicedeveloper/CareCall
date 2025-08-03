@@ -1,116 +1,142 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 
 interface UseVisibilityFocusOptions {
-  onVisibilityChange?: () => void;
-  onFocus?: () => void;
-  onBlur?: () => void;
-  debounceMs?: number;
-  enabled?: boolean;
-  minIntervalMs?: number; // Minimum time between consecutive calls
+  onVisibilityChange?: (isVisible: boolean) => void;
+  onFocusChange?: (isFocused: boolean) => void;
+  enableRecovery?: boolean;
 }
 
 export function useVisibilityFocus({
   onVisibilityChange,
-  onFocus,
-  onBlur,
-  debounceMs = 100,
-  enabled = true,
-  minIntervalMs = 1000
+  onFocusChange,
+  enableRecovery = true
 }: UseVisibilityFocusOptions = {}) {
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const isInitialized = useRef(false);
-  const [isClient, setIsClient] = useState(false);
-  const lastCallTime = useRef<{ [key: string]: number }>({});
+  const isVisible = useRef(true);
+  const isFocused = useRef(true);
+  const lastVisibilityChange = useRef<number>(Date.now());
 
-  const debouncedCallback = useCallback((callback: () => void, callbackName: string) => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    
-    timeoutRef.current = setTimeout(() => {
-      if (!enabled || !isInitialized.current) return;
-      
-      // Prevent too frequent calls of the same type
-      const now = Date.now();
-      const lastCall = lastCallTime.current[callbackName] || 0;
-      
-      if (now - lastCall >= minIntervalMs) {
-        lastCallTime.current[callbackName] = now;
-        callback();
-      } else {
-        console.log(`Skipping ${callbackName} - too frequent (${now - lastCall}ms ago)`);
-      }
-    }, debounceMs);
-  }, [debounceMs, enabled, minIntervalMs]);
-
+  // Handle visibility change with error recovery
   const handleVisibilityChange = useCallback(() => {
-    if (typeof document !== 'undefined' && !document.hidden && onVisibilityChange) {
-      console.log('Tab became visible');
-      debouncedCallback(onVisibilityChange, 'visibilityChange');
-    }
-  }, [onVisibilityChange, debouncedCallback]);
+    try {
+      const wasVisible = isVisible.current;
+      isVisible.current = !document.hidden;
+      lastVisibilityChange.current = Date.now();
 
-  const handleFocus = useCallback(() => {
-    if (onFocus) {
-      console.log('Window focused');
-      debouncedCallback(onFocus, 'focus');
+      if (isVisible.current !== wasVisible) {
+        console.log(`Tab became ${isVisible.current ? 'visible' : 'hidden'}`);
+        
+        if (onVisibilityChange) {
+          try {
+            onVisibilityChange(isVisible.current);
+          } catch (error) {
+            console.error('Error in visibility change handler:', error);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error handling visibility change:', error);
     }
-  }, [onFocus, debouncedCallback]);
+  }, [onVisibilityChange]);
 
-  const handleBlur = useCallback(() => {
-    if (onBlur) {
-      console.log('Window blurred');
-      debouncedCallback(onBlur, 'blur');
+  // Handle focus/blur with error recovery
+  const handleFocusChange = useCallback(() => {
+    try {
+      const wasFocused = isFocused.current;
+      isFocused.current = document.hasFocus();
+
+      if (isFocused.current !== wasFocused) {
+        console.log(`Window ${isFocused.current ? 'focused' : 'blurred'}`);
+        
+        if (onFocusChange) {
+          try {
+            onFocusChange(isFocused.current);
+          } catch (error) {
+            console.error('Error in focus change handler:', error);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error handling focus change:', error);
     }
-  }, [onBlur, debouncedCallback]);
+  }, [onFocusChange]);
+
+  // Recovery mechanism for stuck states
+  const checkForStuckState = useCallback(() => {
+    if (!enableRecovery) return;
+
+    const timeSinceVisibilityChange = Date.now() - lastVisibilityChange.current;
+    
+    // If we haven't had a visibility change in 30 seconds, something might be stuck
+    if (timeSinceVisibilityChange > 30000) {
+      console.warn('No visibility changes detected for 30s, checking for stuck state...');
+      
+      // Force a visibility check
+      try {
+        const currentHidden = document.hidden;
+        if (isVisible.current !== !currentHidden) {
+          console.log('Detected stuck visibility state, forcing update...');
+          isVisible.current = !currentHidden;
+          lastVisibilityChange.current = Date.now();
+          
+          if (onVisibilityChange) {
+            onVisibilityChange(isVisible.current);
+          }
+        }
+      } catch (error) {
+        console.error('Error in stuck state recovery:', error);
+      }
+    }
+  }, [enableRecovery, onVisibilityChange]);
 
   useEffect(() => {
-    setIsClient(true);
-  }, []);
+    if (typeof document === 'undefined') return;
 
-  useEffect(() => {
-    if (!enabled || typeof window === 'undefined') return;
+    console.log('useVisibilityFocus initialized');
 
-    // Add passive event listeners for better performance
-    const options = { passive: true };
-    document.addEventListener('visibilitychange', handleVisibilityChange, options);
-    window.addEventListener('focus', handleFocus, options);
-    window.addEventListener('blur', handleBlur, options);
+    // Set up event listeners with error handling
+    const safeAddEventListener = (event: string, handler: EventListener) => {
+      try {
+        document.addEventListener(event, handler, { passive: true });
+      } catch (error) {
+        console.error(`Error adding ${event} listener:`, error);
+      }
+    };
 
-    // Mark as initialized after a short delay
-    const initTimeout = setTimeout(() => {
-      isInitialized.current = true;
-      console.log('useVisibilityFocus initialized');
-    }, 100);
+    const safeRemoveEventListener = (event: string, handler: EventListener) => {
+      try {
+        document.removeEventListener(event, handler);
+      } catch (error) {
+        console.error(`Error removing ${event} listener:`, error);
+      }
+    };
+
+    // Add event listeners
+    safeAddEventListener('visibilitychange', handleVisibilityChange);
+    safeAddEventListener('focus', handleFocusChange);
+    safeAddEventListener('blur', handleFocusChange);
+
+    // Set up recovery interval
+    const recoveryInterval = setInterval(checkForStuckState, 10000); // Check every 10 seconds
+
+    // Initial state check
+    try {
+      isVisible.current = !document.hidden;
+      isFocused.current = document.hasFocus();
+    } catch (error) {
+      console.error('Error checking initial state:', error);
+    }
 
     return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
-      }
-      clearTimeout(initTimeout);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', handleFocus);
-      window.removeEventListener('blur', handleBlur);
-      
-      // Reset state
-      isInitialized.current = false;
-      lastCallTime.current = {};
+      safeRemoveEventListener('visibilitychange', handleVisibilityChange);
+      safeRemoveEventListener('focus', handleFocusChange);
+      safeRemoveEventListener('blur', handleFocusChange);
+      clearInterval(recoveryInterval);
     };
-  }, [enabled, handleVisibilityChange, handleFocus, handleBlur]);
-
-  // Return consistent values during SSR
-  if (!isClient) {
-    return {
-      isVisible: true,
-      hasFocus: false,
-      isInitialized: false
-    };
-  }
+  }, [handleVisibilityChange, handleFocusChange, checkForStuckState]);
 
   return {
-    isVisible: typeof document !== 'undefined' ? !document.hidden : true,
-    hasFocus: typeof document !== 'undefined' ? document.hasFocus() : false,
-    isInitialized: isInitialized.current
+    isVisible: isVisible.current,
+    isFocused: isFocused.current,
+    lastVisibilityChange: lastVisibilityChange.current
   };
 } 

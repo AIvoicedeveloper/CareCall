@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState, useRef, useCallback } from "react";
 import { supabase, isSupabaseAvailable } from "./supabaseClient";
 import { diagnoseSupabaseConnection } from "../lib/supabaseDiagnostics";
+import { quickConnectionTest } from "../lib/quickConnectionTest";
 
 export type User = {
   id: string;
@@ -19,8 +20,15 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-async function fetchUserRole(userId: string): Promise<string> {
+async function fetchUserRole(userId: string, roleCache: React.MutableRefObject<Map<string, { role: string; timestamp: number }>>): Promise<string> {
   console.log('Fetching user role for:', userId);
+  
+  // Check cache first
+  const cached = roleCache.current.get(userId);
+  if (cached && (Date.now() - cached.timestamp) < 300000) { // 5 minutes cache
+    console.log('Using cached role:', cached.role);
+    return cached.role;
+  }
   
   if (!supabase) {
     console.log('Supabase not configured, using default role');
@@ -28,7 +36,20 @@ async function fetchUserRole(userId: string): Promise<string> {
   }
   
   try {
-    // Add timeout for role fetch - increased to 5 seconds
+    // First, try a quick connection test
+    const connectionTest = await quickConnectionTest();
+    
+    console.log('🔍 Connection test result:', connectionTest);
+    
+    // Temporarily bypass connection test to see if database query works
+    // if (!connectionTest.success) {
+    //   console.log('Connection test failed, using default role');
+    //   return 'staff';
+    // }
+    
+    // Try the role fetch with a shorter timeout
+    console.log('🔍 Attempting to fetch role from users table for userId:', userId);
+    
     const rolePromise = supabase
       .from('users')
       .select('role')
@@ -36,9 +57,10 @@ async function fetchUserRole(userId: string): Promise<string> {
       .single();
     
     const roleTimeout = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('Role fetch timeout')), 5000); // Increased timeout
+      setTimeout(() => reject(new Error('Role fetch timeout')), 5000); // Increased timeout for debugging
     });
     
+    console.log('🔍 Starting role fetch with 5-second timeout...');
     const { data, error } = await Promise.race([rolePromise, roleTimeout]);
     
     console.log('Role fetch result:', { data, error });
@@ -69,8 +91,13 @@ async function fetchUserRole(userId: string): Promise<string> {
       return 'staff';
     }
     
-    console.log('User role found:', data.role);
-    return data.role || 'staff';
+    const role = data.role || 'staff';
+    console.log('User role found:', role);
+    
+    // Cache the successful result
+    roleCache.current.set(userId, { role, timestamp: Date.now() });
+    
+    return role;
   } catch (error: any) {
     console.error('Exception fetching user role:', error);
     
@@ -93,6 +120,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const diagnosticsRun = useRef(false);
   const lastAuthCheck = useRef<number>(0);
   const authCheckTimeout = useRef<NodeJS.Timeout | null>(null);
+  const roleCache = useRef<Map<string, { role: string; timestamp: number }>>(new Map());
 
   // Function to check and update auth state
   const checkAuthState = async () => {
@@ -124,7 +152,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Add timeout for session check
       const sessionPromise = supabase.auth.getSession();
       const sessionTimeout = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Session check timeout')), 5000); // Increased timeout
+        setTimeout(() => reject(new Error('Session check timeout')), 2000); // Even shorter timeout
       });
       
       const sessionResult = await Promise.race([sessionPromise, sessionTimeout]);
@@ -141,13 +169,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log('User found, fetching role...');
         
         try {
-          // Add timeout for role fetch
-          const rolePromise = fetchUserRole(sessionResult.data.session.user.id);
-          const roleTimeout = new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error('Role fetch timeout')), 5000); // Increased timeout
-          });
-          
-          const role = await Promise.race([rolePromise, roleTimeout]);
+                     // Add timeout for role fetch
+           const rolePromise = fetchUserRole(sessionResult.data.session.user.id, roleCache);
+           const roleTimeout = new Promise<never>((_, reject) => {
+             setTimeout(() => reject(new Error('Role fetch timeout')), 2000); // Even shorter timeout
+           });
+           
+           const role = await Promise.race([rolePromise, roleTimeout]);
           console.log('Role fetched:', role);
           setUser({
             id: sessionResult.data.session.user.id,
@@ -191,14 +219,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       // Only recheck if we're not currently loading and it's been a while
       const now = Date.now();
-      if (!isCheckingAuth.current && !loading && (now - lastAuthCheck.current > 5000)) {
+      if (!isCheckingAuth.current && !loading && (now - lastAuthCheck.current > 10000)) { // Increased to 10 seconds
         console.log('Tab became visible, rechecking auth state...');
         checkAuthState();
       } else {
         console.log('Skipping auth recheck - too recent, already loading, or already checking');
       }
     }
-  }, [loading]);
+  }, [loading, checkAuthState]);
 
   const handleFocus = useCallback(() => {
     console.log('Window focused, checking if auth recheck is needed...');
@@ -331,10 +359,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               if (session?.user) {
                 try {
                   // Add timeout for role fetch in auth state change
-                  const rolePromise = fetchUserRole(session.user.id);
-                  const roleTimeout = new Promise<never>((_, reject) => {
-                    setTimeout(() => reject(new Error('Role fetch timeout')), 5000);
-                  });
+                                     const rolePromise = fetchUserRole(session.user.id, roleCache);
+                                     const roleTimeout = new Promise<never>((_, reject) => {
+                     setTimeout(() => reject(new Error('Role fetch timeout')), 2000);
+                   });
                   
                   const role = await Promise.race([rolePromise, roleTimeout]);
                   setUser({
