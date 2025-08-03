@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import ProtectedRoute from "../components/ProtectedRoute";
 import { supabase } from "../supabaseClient";
 import { useAuth } from "../authProvider";
@@ -9,8 +9,8 @@ interface EscalatedReport {
   call_id: string;
   risk_level: string;
   escalate: boolean;
-  notes: string;
   patients?: { full_name: string };
+  patient_id?: string;
 }
 
 export default function AlertsPage() {
@@ -19,21 +19,31 @@ export default function AlertsPage() {
   const [error, setError] = useState("");
   const { user } = useAuth();
 
-  useEffect(() => {
-    if (!user) {
-      setReports([]);
+  // Reset states when user changes
+  const resetStates = useCallback(() => {
+    setReports([]);
+    setLoading(false);
+    setError("");
+  }, []);
+
+  // Fetch escalated reports
+  const fetchEscalated = useCallback(async () => {
+    if (!supabase) {
+      setError("Supabase not configured");
       setLoading(false);
       return;
     }
-    const fetchEscalated = async () => {
-      setLoading(true);
-      setError("");
+    
+    setLoading(true);
+    setError("");
+    try {
       // Join calls to get patient name
       const { data, error } = await supabase
         .from("symptom_reports")
-        .select("id, call_id, risk_level, escalate, notes, calls(patients(full_name))")
+        .select("id, call_id, risk_level, escalate, calls(patient_id, patients(full_name))")
         .eq("escalate", true)
         .order("id", { ascending: false });
+      
       if (error) {
         setError(error.message);
         setReports([]);
@@ -43,13 +53,29 @@ export default function AlertsPage() {
           (data as any[]).map((r) => ({
             ...r,
             patients: r.calls?.patients || undefined,
+            patient_id: r.calls?.patient_id || undefined,
           }))
         );
       }
+    } catch (err) {
+      setError("Failed to fetch escalated reports");
+      setReports([]);
+    } finally {
       setLoading(false);
-    };
-    fetchEscalated();
-  }, [user]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      resetStates();
+      return;
+    }
+    
+    // Only fetch if we don't have data yet
+    if (reports.length === 0) {
+      fetchEscalated();
+    }
+  }, [user?.id]); // Only depend on user ID
 
   return (
     <ProtectedRoute>
@@ -68,7 +94,7 @@ export default function AlertsPage() {
                 <th className="text-left p-2">Patient</th>
                 <th className="text-left p-2">Risk Level</th>
                 <th className="text-left p-2">Escalated</th>
-                <th className="text-left p-2">Notes</th>
+                <th className="text-left p-2">Profile</th>
               </tr>
             </thead>
             <tbody>
@@ -77,7 +103,7 @@ export default function AlertsPage() {
                   <td className="p-2">{r.patients?.full_name || "Unknown"}</td>
                   <td className="p-2">{r.risk_level}</td>
                   <td className="p-2">{r.escalate ? "Yes" : "No"}</td>
-                  <td className="p-2">{r.notes}</td>
+                  <td className="p-2">{r.patient_id ? <a href={`/patients/${r.patient_id}`} className="text-blue-600 hover:underline">View Profile</a> : "-"}</td>
                 </tr>
               ))}
             </tbody>

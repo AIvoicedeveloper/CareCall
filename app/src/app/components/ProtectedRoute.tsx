@@ -23,8 +23,14 @@ export default function ProtectedRoute({
     }
   }, [user, loading, requiredRole, router]);
 
-  if (loading || !user || (requiredRole && user.role !== requiredRole)) {
+  // Show loading only when auth is still loading
+  if (loading) {
     return <div className="flex justify-center items-center h-screen">Loading...</div>;
+  }
+
+  // Don't render children if no user or wrong role
+  if (!user || (requiredRole && user.role !== requiredRole)) {
+    return null;
   }
 
   return <>{children}</>;

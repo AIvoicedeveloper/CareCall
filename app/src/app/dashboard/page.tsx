@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import ProtectedRoute from "../components/ProtectedRoute";
 import { supabase } from "../supabaseClient";
 import { Bar } from "react-chartjs-2";
@@ -13,6 +13,9 @@ import {
   Legend,
 } from "chart.js";
 import { useAuth } from "../authProvider";
+import { useVisibilityFocus } from "../../lib/useVisibilityFocus";
+import { useLoadingTimeout } from "../../lib/useLoadingTimeout";
+import { useTabSwitchRecovery } from "../../lib/useTabSwitchRecovery";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
@@ -21,7 +24,6 @@ interface Call {
   patient_id: string;
   call_time: string;
   call_status: string;
-  transcript: string;
   patients?: { full_name: string };
 }
 
@@ -30,6 +32,7 @@ interface Patient {
   full_name: string;
   last_visit: string;
   condition_type: string;
+  call_status?: string; // Added for upcoming follow-ups logic
 }
 
 export default function DashboardPage() {
@@ -47,28 +50,75 @@ export default function DashboardPage() {
   const [errorVolume, setErrorVolume] = useState("");
 
   const { user } = useAuth();
+  const isInitialized = useRef(false);
+  const lastFetchTime = useRef<number>(0);
+  const fetchTimeout = useRef<NodeJS.Timeout | null>(null);
+  const fetchAllDataRef = useRef<(() => void) | null>(null);
+  const stopLoadingTimeoutRef = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
-    if (!user) {
-      setCalls([]);
-      setUpcoming([]);
-      setStats(null);
-      setVolumeData(null);
+  // Force reset all loading states (for timeout handling)
+  const forceResetLoadingStates = useCallback(() => {
+    console.log('🔧 Force resetting all loading states...');
+    setLoading(false);
+    setLoadingUpcoming(false);
+    setLoadingStats(false);
+    setLoadingVolume(false);
+  }, []);
+
+  // Use loading timeout monitoring - MOVED TO TOP to avoid temporal dead zone
+  const { startLoadingTimeout, stopLoadingTimeout } = useLoadingTimeout({
+    timeout: 8000, // 8 second timeout
+    onTimeout: () => {
+      console.error('🚨 Dashboard loading timeout! This might be the tab switch bug.');
+      // Try to refetch data after timeout
+      setTimeout(() => {
+        if (user && fetchAllDataRef.current) {
+          console.log('🔄 Attempting to refetch after timeout...');
+          fetchAllDataRef.current();
+        } else {
+          console.log('🔄 Timeout occurred, but fetchAllData not yet available');
+        }
+      }, 1000);
+    },
+    forceResetLoadingStates,
+    resetOnVisibilityChange: true
+  });
+
+  // Store stopLoadingTimeout in ref to break circular dependency
+  stopLoadingTimeoutRef.current = stopLoadingTimeout;
+
+
+  // Reset all states when user changes
+  const resetStates = useCallback(() => {
+    setCalls([]);
+    setUpcoming([]);
+    setStats(null);
+    setVolumeData(null);
+    setError("");
+    setErrorUpcoming("");
+    setErrorStats("");
+    setErrorVolume("");
+    forceResetLoadingStates();
+  }, []); // Empty dependency array to make it stable
+
+  // Fetch recent calls
+  const fetchCalls = useCallback(async () => {
+    if (!supabase) {
+      setError("Supabase not configured");
       setLoading(false);
-      setLoadingUpcoming(false);
-      setLoadingStats(false);
-      setLoadingVolume(false);
       return;
     }
-    const fetchCalls = async () => {
-      setLoading(true);
-      setError("");
-      // Fetch the 10 most recent calls, joining patient name correctly
+    
+    setLoading(true);
+    setError("");
+    try {
       const { data, error } = await supabase
         .from("calls")
-        .select("id, patient_id, call_time, call_status, transcript, patients(full_name)")
+        .select("id, patient_id, call_time, call_status, patients(full_name)")
+        .in("call_status", ["success", "failed"])
         .order("call_time", { ascending: false })
         .limit(10);
+      
       if (error) {
         setError(error.message);
         setCalls([]);
@@ -80,116 +130,252 @@ export default function DashboardPage() {
           }))
         );
       }
+    } catch (err: any) {
+      setError("Failed to fetch calls");
+      setCalls([]);
+    } finally {
       setLoading(false);
-    };
-    fetchCalls();
+    }
+  }, []);
 
-    // Revert: Fetch all patients and all recent calls, then filter in JS
-    const fetchUpcoming = async () => {
-      setLoadingUpcoming(true);
-      setErrorUpcoming("");
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      // Get all patients
+  // Fetch upcoming follow-ups
+  const fetchUpcoming = useCallback(async () => {
+    if (!supabase) {
+      setErrorUpcoming("Supabase not configured");
+      setLoadingUpcoming(false);
+      return;
+    }
+    
+    setLoadingUpcoming(true);
+    setErrorUpcoming("");
+    try {
       const { data: patients, error: patientsError } = await supabase
         .from("patients")
         .select("id, full_name, last_visit, condition_type");
+      
       if (patientsError) {
         setErrorUpcoming(patientsError.message);
         setUpcoming([]);
-        setLoadingUpcoming(false);
         return;
       }
-      // Get all calls in last 7 days
-      const { data: recentCalls, error: callsError } = await supabase
+      
+      const { data: calls, error: callsError } = await supabase
         .from("calls")
-        .select("patient_id, call_time")
-        .gte("call_time", sevenDaysAgo.toISOString());
+        .select("patient_id, call_status, call_time")
+        .in("call_status", ["success", "failed", "to be called"]);
+      
       if (callsError) {
         setErrorUpcoming(callsError.message);
         setUpcoming([]);
-        setLoadingUpcoming(false);
         return;
       }
-      const recentPatientIds = new Set((recentCalls as any[]).map((c) => c.patient_id));
-      // Patients with no recent call
-      setUpcoming((patients as Patient[]).filter((p) => !recentPatientIds.has(p.id)));
+      
+      const callMap = new Map();
+      (calls as any[]).forEach((c) => {
+        if (!callMap.has(c.patient_id) || new Date(c.call_time) > new Date(callMap.get(c.patient_id).call_time)) {
+          callMap.set(c.patient_id, c);
+        }
+      });
+      
+      setUpcoming((patients as Patient[])
+        .map((p) => ({
+          ...p,
+          call_status: callMap.has(p.id) ? callMap.get(p.id).call_status : "not called yet"
+        }))
+        .filter((p) => p.call_status === "to be called")
+      );
+    } catch (err: any) {
+      setErrorUpcoming("Failed to fetch upcoming follow-ups");
+      setUpcoming([]);
+    } finally {
       setLoadingUpcoming(false);
-    };
-    fetchUpcoming();
+    }
+  }, []);
 
-    // Revert: Fetch all relevant symptom reports and process in JS
-    const fetchStats = async () => {
-      setLoadingStats(true);
-      setErrorStats("");
+  // Fetch statistics
+  const fetchStats = useCallback(async () => {
+    if (!supabase) {
+      setErrorStats("Supabase not configured");
+      setLoadingStats(false);
+      return;
+    }
+    
+    setLoadingStats(true);
+    setErrorStats("");
+    try {
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      // Number of calls in last 7 days
+      
       const { count: numCalls, error: callsError } = await supabase
         .from("calls")
         .select("id", { count: "exact", head: true })
         .gte("call_time", sevenDaysAgo.toISOString());
+      
       if (callsError) {
         setErrorStats(callsError.message);
         setStats(null);
-        setLoadingStats(false);
         return;
       }
-      // Number escalated and average risk level from symptom_reports
+      
       const { data: reports, error: reportsError } = await supabase
         .from("symptom_reports")
         .select("risk_level, escalate")
         .gte("created_at", sevenDaysAgo.toISOString());
+      
       if (reportsError) {
         setErrorStats(reportsError.message);
         setStats(null);
-        setLoadingStats(false);
         return;
       }
+      
       const numEscalated = (reports as any[]).filter((r) => r.escalate).length;
-      // Calculate average risk level (high=3, medium=2, low=1)
       const riskMap: Record<string, number> = { low: 1, medium: 2, high: 3 };
       const riskVals = (reports as any[]).map((r) => riskMap[r.risk_level] || 0).filter((v) => v > 0);
       const avgRiskNum = riskVals.length ? riskVals.reduce((a, b) => a + b, 0) / riskVals.length : 0;
       const avgRisk = avgRiskNum >= 2.5 ? "high" : avgRiskNum >= 1.5 ? "medium" : avgRiskNum > 0 ? "low" : "N/A";
+      
       setStats({ numCalls: numCalls || 0, numEscalated, avgRisk });
+    } catch (err: any) {
+      setErrorStats("Failed to fetch statistics");
+      setStats(null);
+    } finally {
       setLoadingStats(false);
-    };
-    fetchStats();
+    }
+  }, []);
 
-    // Revert: Fetch all calls in last 7 days and group in JS
-    const fetchVolume = async () => {
-      setLoadingVolume(true);
-      setErrorVolume("");
+  // Fetch volume data
+  const fetchVolume = useCallback(async () => {
+    if (!supabase) {
+      setErrorVolume("Supabase not configured");
+      setLoadingVolume(false);
+      return;
+    }
+    
+    setLoadingVolume(true);
+    setErrorVolume("");
+    try {
       const today = new Date();
       const days: string[] = [];
       const counts: number[] = [];
+      
       for (let i = 6; i >= 0; i--) {
         const d = new Date(today);
         d.setDate(today.getDate() - i);
         days.push(d.toISOString().slice(0, 10));
         counts.push(0);
       }
+      
       const { data: calls, error } = await supabase
         .from("calls")
         .select("call_time")
         .gte("call_time", days[0] + "T00:00:00.000Z");
+      
       if (error) {
         setErrorVolume(error.message);
         setVolumeData(null);
-        setLoadingVolume(false);
         return;
       }
+      
       (calls as any[]).forEach((call) => {
         const date = call.call_time.slice(0, 10);
         const idx = days.indexOf(date);
         if (idx !== -1) counts[idx]++;
       });
+      
       setVolumeData({ labels: days, data: counts });
+    } catch (err: any) {
+      setErrorVolume("Failed to fetch volume data");
+      setVolumeData(null);
+    } finally {
       setLoadingVolume(false);
-    };
+    }
+  }, []);
+
+  // Function to fetch all data with proper abort signal handling
+  const fetchAllData = useCallback(() => {
+    if (!user) return;
+    
+    console.log('Fetching all dashboard data...');
+    lastFetchTime.current = Date.now();
+    
+    // Start loading timeout monitoring
+    startLoadingTimeout();
+    
+    // Start all fetches
+    fetchCalls();
+    fetchUpcoming();
+    fetchStats();
     fetchVolume();
-  }, [user]);
+    
+    // Check loading completion after a delay
+    setTimeout(() => {
+      stopLoadingTimeoutRef.current?.();
+    }, 2000); // Give enough time for all fetches to complete
+  }, [user, fetchCalls, fetchUpcoming, fetchStats, fetchVolume, startLoadingTimeout]);
+
+  // Store fetchAllData in ref for timeout handler access
+  fetchAllDataRef.current = fetchAllData;
+
+  // Handle visibility change and focus events with improved state management
+  const handleRefetchOnVisibility = useCallback(() => {
+    if (!isInitialized.current || !user) return;
+    
+    const timeSinceLastFetch = Date.now() - lastFetchTime.current;
+    // Only refetch if it's been more than 30 seconds since last fetch
+    if (timeSinceLastFetch > 30000) {
+      console.log('Tab regained focus/visibility, refetching data...');
+      fetchAllData();
+    } else {
+      console.log('Recent fetch detected, skipping refetch');
+    }
+  }, [user, fetchAllData]);
+
+
+
+  // Use the visibility/focus hook for proper event handling
+  useVisibilityFocus({
+    onVisibilityChange: handleRefetchOnVisibility,
+    onFocus: handleRefetchOnVisibility,
+    debounceMs: 300,
+    enabled: isInitialized.current && !!user
+  });
+
+  // Nuclear option: tab switch recovery with page reload as last resort
+  const { triggerRecovery } = useTabSwitchRecovery({
+    enabled: true,
+    maxStuckTime: 12000, // 12 seconds before nuclear option
+    reloadAsLastResort: true, // Enable the nuclear option
+    onRecoveryAttempt: (method) => {
+      console.log(`🚨 Tab switch recovery attempted via: ${method}`);
+      if (method === 'page-reload') {
+        console.log('💣 About to reload page due to persistent loading bug');
+      }
+    }
+  });
+
+  useEffect(() => {
+    if (!user) {
+      resetStates();
+      return;
+    }
+    
+    // Clear any existing timeout
+    if (fetchTimeout.current) {
+      clearTimeout(fetchTimeout.current);
+    }
+    
+    // Set a small delay to avoid race conditions
+    fetchTimeout.current = setTimeout(() => {
+      fetchAllData();
+      isInitialized.current = true;
+    }, 100);
+
+    return () => {
+      if (fetchTimeout.current) {
+        clearTimeout(fetchTimeout.current);
+      }
+    };
+  }, [user?.id]); // Only depend on user ID, not the functions
 
   return (
     <ProtectedRoute>
@@ -211,7 +397,6 @@ export default function DashboardPage() {
                     <th className="text-left p-2">Patient</th>
                     <th className="text-left p-2">Call Time</th>
                     <th className="text-left p-2">Status</th>
-                    <th className="text-left p-2">Transcript</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -220,7 +405,6 @@ export default function DashboardPage() {
                       <td className="p-2">{call.patients?.full_name || ""}</td>
                       <td className="p-2">{new Date(call.call_time).toLocaleString()}</td>
                       <td className="p-2">{call.call_status}</td>
-                      <td className="p-2">{call.transcript}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -244,6 +428,7 @@ export default function DashboardPage() {
                     <th className="text-left p-2">Patient</th>
                     <th className="text-left p-2">Last Visit</th>
                     <th className="text-left p-2">Condition</th>
+                    <th className="text-left p-2">Call Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -252,6 +437,7 @@ export default function DashboardPage() {
                       <td className="p-2">{p.full_name}</td>
                       <td className="p-2">{p.last_visit}</td>
                       <td className="p-2">{p.condition_type}</td>
+                      <td className="p-2">{p.call_status}</td>
                     </tr>
                   ))}
                 </tbody>

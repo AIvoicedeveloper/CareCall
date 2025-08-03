@@ -72,7 +72,17 @@ export default function Home() {
   };
 
   if (loading) {
-    return <div className="flex justify-center items-center h-screen">Loading...</div>;
+    return (
+      <div className="flex flex-col justify-center items-center h-screen">
+        <div className="text-lg mb-4">Loading...</div>
+        {!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? (
+          <div className="text-red-600 text-center max-w-md">
+            <p className="mb-2">⚠️ Supabase not configured</p>
+            <p className="text-sm">Please check SUPABASE_SETUP.md for configuration instructions.</p>
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   if (!user) {

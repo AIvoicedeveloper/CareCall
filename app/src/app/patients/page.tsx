@@ -1,5 +1,5 @@
 "use client";
-import React from "react";
+import React, { useCallback, useRef } from "react";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import ProtectedRoute from "../components/ProtectedRoute";
@@ -12,6 +12,7 @@ import AddPatientDialog from "./AddPatientDialog";
 import EditPatientDialog from "./EditPatientDialog";
 import DeletePatientDialog from "./DeletePatientDialog";
 import { useAuth } from "../authProvider";
+import { useVisibilityFocus } from "../../lib/useVisibilityFocus";
 
 const COUNTRY_CODES = [
   { code: "+1", label: "USA/Canada" },
@@ -34,6 +35,7 @@ interface Patient {
   last_visit: string;
   condition_type: string;
   doctor_id?: string;
+  call_status?: string; // Added for upcoming follow-ups logic
 }
 
 interface Doctor {
@@ -66,55 +68,127 @@ export default function PatientsPage() {
   const [deleteError, setDeleteError] = useState("");
   // Get user role from authProvider
   const { user } = useAuth();
+  const lastFetchTime = useRef<number>(0);
 
-  useEffect(() => {
-    if (!user) {
-      setPatients([]);
+  // Reset states when user changes
+  const resetStates = useCallback(() => {
+    setPatients([]);
+    setDoctors([]);
+    setLoading(false);
+    setError("");
+    setOpen(false);
+    setEditOpen(false);
+    setDeleteId(null);
+    setDeleteLoading(false);
+    setDeleteError("");
+  }, []);
+
+  // Fetch patients with abort signal support
+  const fetchPatients = useCallback(async () => {
+    if (!supabase) {
+      setError("Supabase not configured");
       setLoading(false);
       return;
     }
-    const fetchPatients = async () => {
-      setLoading(true);
-      setError("");
+    
+    setLoading(true);
+    setError("");
+    try {
+      console.log("Fetching patients...");
+      console.log("Supabase URL:", process.env.NEXT_PUBLIC_SUPABASE_URL);
+      console.log("Supabase Key exists:", !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+      
       const { data, error } = await supabase
         .from("patients")
-        .select("id, full_name, phone_number, last_visit, condition_type, doctor_id");
+        .select("*")
+        .order("full_name");
+      
       if (error) {
+        console.error("Supabase error:", error);
         setError(error.message);
         setPatients([]);
       } else {
+        console.log("Patients fetched successfully:", data?.length);
         setPatients(data as Patient[]);
+        lastFetchTime.current = Date.now();
       }
+    } catch (err: any) {
+      console.error("Network error:", err);
+      setError("Failed to fetch patients - network error");
+      setPatients([]);
+    } finally {
       setLoading(false);
-    };
-    fetchPatients();
-  }, [user]);
-
-  useEffect(() => {
-    if (!user) {
-      setDoctors([]);
-      return;
     }
-    // Fetch doctors for dropdown
-    const fetchDoctors = async () => {
+  }, []);
+
+  // Fetch doctors with abort signal support
+  const fetchDoctors = useCallback(async () => {
+    if (!supabase) return;
+    
+    try {
       const { data, error } = await supabase
         .from("users")
         .select("id, name, email, role")
         .eq("role", "doctor");
+      
       if (!error && data) {
         setDoctors(data as Doctor[]);
       }
-    };
+    } catch (err: any) {
+      console.error("Failed to fetch doctors:", err);
+    }
+  }, []);
+
+  // Function to fetch all data with abort signal
+  const fetchAllData = useCallback(() => {
+    if (!user) return;
+    
+    console.log('Fetching all patients data...');
+    fetchPatients();
     fetchDoctors();
-  }, [user]);
+  }, [user, fetchPatients, fetchDoctors]);
+
+  // Handle visibility/focus events for refetching
+  const handleRefetchOnVisibility = useCallback(() => {
+    if (!user) return;
+    
+    const timeSinceLastFetch = Date.now() - lastFetchTime.current;
+    // Only refetch if it's been more than 30 seconds since last fetch
+    if (timeSinceLastFetch > 30000) {
+      console.log('Tab regained focus/visibility, refetching patients data...');
+      fetchAllData();
+    }
+  }, [user, fetchAllData]);
+
+  // Use the visibility/focus hook
+  useVisibilityFocus({
+    onVisibilityChange: handleRefetchOnVisibility,
+    onFocus: handleRefetchOnVisibility,
+    debounceMs: 300,
+    enabled: !!user
+  });
 
   useEffect(() => {
-    if (!user) {
-      setDeleteId(null);
-      setDeleteLoading(false);
-      setDeleteError("");
+    // Only fetch if user exists and we don't have data yet
+    if (user && patients.length === 0) {
+      fetchAllData();
+    } else if (!user) {
+      resetStates();
+      // Cancel any in-flight requests
+      // if (abortController.current) { // This line is removed
+      //   abortController.current.abort();
+      //   abortController.current = null;
+      // }
     }
-  }, [user]);
+    
+    return () => {
+      // Cleanup on unmount
+      // if (abortController.current) { // This line is removed
+      //   abortController.current.abort();
+      //   abortController.current = null;
+      // }
+    };
+  }, [user?.id, fetchAllData, resetStates]); // Only depend on user ID
 
   const handleOpen = () => setOpen(true);
   const handleClose = () => {
@@ -149,7 +223,13 @@ export default function PatientsPage() {
   };
 
   const handleCreate = async () => {
+    if (!supabase) {
+      setError("Supabase not configured");
+      return;
+    }
+    
     if (!validate()) return;
+    
     setCreating(true);
     setError(""); // Clear previous errors
     const { full_name, country_code, phone_number, last_visit, condition_type, doctor_id } = form;
@@ -164,19 +244,9 @@ export default function PatientsPage() {
         setCreating(false);
         return;
       }
-      // Refresh patients
-      setLoading(true);
-      const { data, error: fetchError } = await supabase
-        .from("patients")
-        .select("id, full_name, phone_number, last_visit, condition_type, doctor_id");
-      setLoading(false);
-      if (fetchError) {
-        setError(fetchError.message);
-        console.log("Fetch after create error:", fetchError);
-        setCreating(false);
-        return;
-      }
-      setPatients(data as Patient[]);
+      // Reset fetch state and refetch patients
+      // hasFetched.current = false; // This line is removed
+      await fetchPatients();
       handleClose();
     } catch (err: any) {
       setError(err.message || "Unknown error");
@@ -225,6 +295,10 @@ export default function PatientsPage() {
     setErrors((prev: any) => ({ ...prev, [name]: undefined }));
   };
   const handleEditSave = async () => {
+    if (!supabase) {
+      setError("Supabase not configured");
+      return;
+    }
     if (!validateEdit()) {
       setError("Validation failed. Please check the form fields.");
       return;
@@ -244,16 +318,8 @@ export default function PatientsPage() {
         setLoading(false);
         return;
       }
-      const { data, error: fetchError } = await supabase
-        .from("patients")
-        .select("id, full_name, phone_number, last_visit, condition_type, doctor_id");
-      if (fetchError) {
-        setError(fetchError.message);
-        console.log("Fetch after edit error:", fetchError);
-        setLoading(false);
-        return;
-      }
-      setPatients(data as Patient[]);
+      // hasFetched.current = false; // This line is removed
+      await fetchPatients();
       handleEditClose();
     } catch (err: any) {
       setError(err.message || "Unknown error");
@@ -274,36 +340,36 @@ export default function PatientsPage() {
     return Object.keys(newErrors).length === 0;
   };
   const handleDelete = async () => {
+    if (!supabase) {
+      setDeleteError("Supabase not configured");
+      return;
+    }
     if (!deleteId) {
       setDeleteLoading(false);
       return;
     }
+    
     setDeleteLoading(true);
     setDeleteError("");
     try {
-      const { error } = await supabase.from("patients").delete().eq("id", deleteId);
+      const { error } = await supabase
+        .from("patients")
+        .delete()
+        .eq("id", deleteId);
+      
       if (error) {
         setDeleteError(error.message);
-        console.log("Delete error:", error);
-        setDeleteLoading(false);
-        return;
+      } else {
+        // Reset fetch state and refetch patients
+        // hasFetched.current = false; // This line is removed
+        await fetchPatients();
+        setDeleteId(null);
       }
-      const { data, error: fetchError } = await supabase
-        .from("patients")
-        .select("id, full_name, phone_number, last_visit, condition_type, doctor_id");
-      if (fetchError) {
-        setDeleteError(fetchError.message);
-        console.log("Fetch after delete error:", fetchError);
-        setDeleteLoading(false);
-        return;
-      }
-      setPatients(data as Patient[]);
-      setDeleteId(null); // Only close after successful fetch
-    } catch (err: any) {
-      setDeleteError(err.message || "Unknown error");
-      console.log("Unexpected delete error:", err);
+    } catch (err) {
+      setDeleteError("Failed to delete patient");
+    } finally {
+      setDeleteLoading(false);
     }
-    setDeleteLoading(false);
   };
 
   const handleDeleteOpen = React.useCallback((id: string) => {
