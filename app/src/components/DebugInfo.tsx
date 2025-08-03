@@ -7,10 +7,9 @@ export default function DebugInfo() {
   const { user, loading } = useAuth();
   const [isClient, setIsClient] = useState(false);
   const [networkStatus, setNetworkStatus] = useState('online');
-  const { isVisible, hasFocus, isInitialized } = useVisibilityFocus({
+  const { isVisible, isFocused } = useVisibilityFocus({
     onVisibilityChange: () => console.log('Debug: Tab became visible'),
-    onFocus: () => console.log('Debug: Window focused'),
-    onBlur: () => console.log('Debug: Window blurred')
+    onFocusChange: () => console.log('Debug: Window focused')
   });
 
   // Monitor network status
@@ -47,7 +46,6 @@ export default function DebugInfo() {
         <div>Network: online</div>
         <div>Visible: true</div>
         <div>Focused: false</div>
-        <div>Initialized: false</div>
         <div>Time: --:--:--</div>
       </div>
     );
@@ -59,8 +57,7 @@ export default function DebugInfo() {
       <div>User: {user ? user.email : 'null'}</div>
       <div>Network: {networkStatus}</div>
       <div>Visible: {isVisible ? 'true' : 'false'}</div>
-      <div>Focused: {hasFocus ? 'true' : 'false'}</div>
-      <div>Initialized: {isInitialized ? 'true' : 'false'}</div>
+      <div>Focused: {isFocused ? 'true' : 'false'}</div>
       <div>Time: {new Date().toLocaleTimeString()}</div>
     </div>
   );

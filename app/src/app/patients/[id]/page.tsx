@@ -96,17 +96,43 @@ export default function PatientProfilePage() {
     setLoadingSymptoms(true);
     setErrorSymptoms("");
     try {
-      // Fetch symptom_reports for this patient using the RPC
-      const { data, error } = await supabase
+      // First try the RPC function
+      const { data: rpcData, error: rpcError } = await supabase
         .rpc('get_symptom_reports_for_patient', { pid: id });
       
+      if (!rpcError && rpcData) {
+        setSymptoms(rpcData as any[]);
+        return;
+      }
+      
+      // Fallback: fetch symptom_reports directly
+      console.log('RPC function failed, trying direct query...');
+      const { data, error } = await supabase
+        .from("symptom_reports")
+        .select(`
+          id,
+          symptoms,
+          risk_level,
+          escalate,
+          created_at,
+          calls (
+            id,
+            call_time,
+            patient_id
+          )
+        `)
+        .eq("calls.patient_id", id)
+        .order("created_at", { ascending: false });
+      
       if (error) {
+        console.log('Direct query also failed:', error);
         setErrorSymptoms(error.message);
         setSymptoms([]);
       } else {
         setSymptoms(data as any[]);
       }
     } catch (err: any) {
+      console.error('Failed to fetch symptoms:', err);
       setErrorSymptoms("Failed to fetch symptoms");
       setSymptoms([]);
     } finally {
@@ -138,9 +164,7 @@ export default function PatientProfilePage() {
   // Use the visibility/focus hook
   useVisibilityFocus({
     onVisibilityChange: handleRefetchOnVisibility,
-    onFocus: handleRefetchOnVisibility,
-    debounceMs: 300,
-    enabled: !!user && !!id
+    onFocusChange: handleRefetchOnVisibility
   });
 
   useEffect(() => {

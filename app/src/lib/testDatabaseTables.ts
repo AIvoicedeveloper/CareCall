@@ -65,8 +65,9 @@ export async function testDatabaseTables() {
       console.log('❌ auth.users table access failed:', error);
     }
 
-  } catch (error: any) {
-    results.errors.push(`General database test error: ${error.message}`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    results.errors.push(`General database test error: ${errorMessage}`);
     console.log('❌ General database test error:', error);
   }
 

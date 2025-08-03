@@ -163,9 +163,7 @@ export default function PatientsPage() {
   // Use the visibility/focus hook
   useVisibilityFocus({
     onVisibilityChange: handleRefetchOnVisibility,
-    onFocus: handleRefetchOnVisibility,
-    debounceMs: 300,
-    enabled: !!user
+    onFocusChange: handleRefetchOnVisibility
   });
 
   useEffect(() => {

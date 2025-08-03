@@ -32,10 +32,11 @@ export async function quickConnectionTest() {
       results.error = `Unexpected status: ${response.status}`;
       console.log('❌ Quick connection test failed:', response.status);
     }
-  } catch (error: any) {
+  } catch (error) {
     results.responseTime = Date.now() - startTime;
-    results.error = error.message;
-    console.log('❌ Quick connection test failed:', error.message);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    results.error = errorMessage;
+    console.log('❌ Quick connection test failed:', errorMessage);
   }
 
   return results;

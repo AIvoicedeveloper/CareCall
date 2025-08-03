@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState, useRef, useCallback } f
 import { supabase, isSupabaseAvailable } from "./supabaseClient";
 import { diagnoseSupabaseConnection } from "../lib/supabaseDiagnostics";
 import { quickConnectionTest } from "../lib/quickConnectionTest";
+import { retryWithBackoff, isRetryableError, getAdaptiveTimeout, retrySupabaseOperation, testSupabaseConnectivity } from "../lib/connectionUtils";
 
 export type User = {
   id: string;
@@ -21,93 +22,136 @@ type AuthContextType = {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 async function fetchUserRole(userId: string, roleCache: React.MutableRefObject<Map<string, { role: string; timestamp: number }>>): Promise<string> {
-  console.log('Fetching user role for:', userId);
+  console.log('🔍 Starting role fetch for userId:', userId);
   
   // Check cache first
   const cached = roleCache.current.get(userId);
   if (cached && (Date.now() - cached.timestamp) < 300000) { // 5 minutes cache
-    console.log('Using cached role:', cached.role);
+    console.log('✅ Using cached role:', cached.role);
     return cached.role;
   }
   
   if (!supabase) {
-    console.log('Supabase not configured, using default role');
+    console.log('⚠️ Supabase not configured, using default role');
     return 'staff';
   }
   
+  console.log('🔍 Supabase configured, attempting role fetch...');
+  
+  // Test connectivity first
   try {
-    // First, try a quick connection test
-    const connectionTest = await quickConnectionTest();
+    console.log('🔍 Testing Supabase connectivity...');
+    const connectivityResult = await testSupabaseConnectivity();
+    console.log('🔍 Connectivity test result:', connectivityResult);
     
-    console.log('🔍 Connection test result:', connectionTest);
-    
-    // Temporarily bypass connection test to see if database query works
-    // if (!connectionTest.success) {
-    //   console.log('Connection test failed, using default role');
-    //   return 'staff';
-    // }
-    
-    // Try the role fetch with a shorter timeout
-    console.log('🔍 Attempting to fetch role from users table for userId:', userId);
-    
-    const rolePromise = supabase
-      .from('users')
-      .select('role')
-      .eq('id', userId)
-      .single();
-    
-    const roleTimeout = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('Role fetch timeout')), 5000); // Increased timeout for debugging
-    });
-    
-    console.log('🔍 Starting role fetch with 5-second timeout...');
-    const { data, error } = await Promise.race([rolePromise, roleTimeout]);
-    
-    console.log('Role fetch result:', { data, error });
-    
-    if (error) {
-      // Check if it's a table doesn't exist error
-      if (error.message.includes('relation "users" does not exist') || 
-          error.message.includes('does not exist')) {
-        console.log('Users table does not exist, using default role');
+    if (!connectivityResult.isConnected) {
+      console.log('⚠️ Supabase connectivity test failed, using fallback role determination');
+      return await determineRoleFromMetadata(userId, roleCache);
+    } else {
+      console.log('✅ Supabase connectivity test passed, proceeding with role fetch');
+    }
+  } catch (error) {
+    console.log('⚠️ Connectivity test failed, proceeding with role fetch anyway:', error);
+  }
+  
+  // Try to fetch role from users table
+  try {
+    const role = await retrySupabaseOperation(async () => {
+      console.log('🔍 Attempting to fetch role from users table for userId:', userId);
+      
+      if (!supabase) {
+        throw new Error('Supabase not configured');
+      }
+      
+      console.log('🔍 Executing Supabase query...');
+      const { data, error } = await supabase
+        .from('users')
+        .select('role')
+        .eq('id', userId)
+        .single();
+      
+      console.log('🔍 Role fetch result:', { data, error });
+      
+      if (error) {
+        // Check if it's a table doesn't exist error
+        if (error.message.includes('relation "users" does not exist') || 
+            error.message.includes('does not exist')) {
+          console.log('⚠️ Users table does not exist, using default role');
+          return 'staff';
+        }
+        
+        console.log('❌ Role fetch error:', error.message);
+        throw error; // Let retrySupabaseOperation handle retryable errors
+      }
+      
+      if (!data) {
+        console.log('⚠️ No user data found, using default role');
         return 'staff';
       }
       
-      // Check if it's a network/timeout error
-      if (error.message.includes('fetch') || 
-          error.message.includes('timeout') ||
-          error.message.includes('network') ||
-          error.message.includes('aborted')) {
-        console.log('Network error fetching role, using default role');
-        return 'staff';
-      }
+      const userRole = data.role || 'staff';
+      console.log('✅ User role found:', userRole);
       
-      console.error('Error fetching user role:', error);
-      return 'staff'; // Default fallback
-    }
+      // Cache the successful result
+      roleCache.current.set(userId, { role: userRole, timestamp: Date.now() });
+      
+      return userRole;
+    }, 'Role fetch', 2, 1000); // 2 retries, 1s base delay
     
-    if (!data) {
-      console.log('No user data found, using default role');
-      return 'staff';
-    }
-    
-    const role = data.role || 'staff';
-    console.log('User role found:', role);
-    
-    // Cache the successful result
-    roleCache.current.set(userId, { role, timestamp: Date.now() });
-    
+    console.log('✅ Role fetch completed successfully:', role);
     return role;
-  } catch (error: any) {
-    console.error('Exception fetching user role:', error);
+  } catch (error) {
+    console.error('❌ Role fetch from users table failed:', error);
     
-    // Handle specific timeout errors
-    if (error.message && error.message.includes('timeout')) {
-      console.log('Role fetch timed out, using default role');
+    // Fallback: try to determine role from user metadata or email
+    return await determineRoleFromMetadata(userId, roleCache);
+  }
+}
+
+// Helper function to determine role from metadata
+async function determineRoleFromMetadata(userId: string, roleCache: React.MutableRefObject<Map<string, { role: string; timestamp: number }>>): Promise<string> {
+  try {
+    console.log('🔄 Attempting fallback role determination...');
+    
+    if (!supabase) {
       return 'staff';
     }
     
-    return 'staff'; // Default fallback
+    // Try to get user metadata from auth
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    if (user) {
+      // Check if user has admin email pattern or metadata
+      const email = user.email?.toLowerCase() || '';
+      const metadata = user.user_metadata || {};
+      
+      console.log('🔍 Checking user metadata:', { email, metadata });
+      
+      // Simple role determination logic
+      if (email.includes('admin') || email.includes('administrator') || 
+          metadata.role === 'admin' || metadata.role === 'administrator') {
+        console.log('✅ Determined admin role from email/metadata');
+        const role = 'admin';
+        roleCache.current.set(userId, { role, timestamp: Date.now() });
+        return role;
+      }
+      
+      if (email.includes('doctor') || email.includes('physician') || 
+          metadata.role === 'doctor' || metadata.role === 'physician') {
+        console.log('✅ Determined doctor role from email/metadata');
+        const role = 'doctor';
+        roleCache.current.set(userId, { role, timestamp: Date.now() });
+        return role;
+      }
+    }
+    
+    console.log('✅ Using default staff role');
+    const role = 'staff';
+    roleCache.current.set(userId, { role, timestamp: Date.now() });
+    return role;
+  } catch (fallbackError) {
+    console.error('❌ Fallback role determination failed:', fallbackError);
+    return 'staff'; // Final fallback
   }
 }
 
@@ -121,9 +165,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const lastAuthCheck = useRef<number>(0);
   const authCheckTimeout = useRef<NodeJS.Timeout | null>(null);
   const roleCache = useRef<Map<string, { role: string; timestamp: number }>>(new Map());
+  const authStatePromise = useRef<Promise<void> | null>(null);
 
-  // Function to check and update auth state
-  const checkAuthState = async () => {
+  // Function to check and update auth state with proper debouncing
+  const checkAuthState = useCallback(async () => {
     // Prevent multiple simultaneous auth checks
     if (isCheckingAuth.current) {
       console.log('Auth check already in progress, skipping...');
@@ -132,8 +177,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     
     // Prevent too frequent auth checks (debounce)
     const now = Date.now();
-    if (now - lastAuthCheck.current < 1000) {
+    if (now - lastAuthCheck.current < 2000) { // Increased debounce to 2 seconds
       console.log('Auth check too recent, skipping...');
+      return;
+    }
+    
+    // If there's already a pending auth check, wait for it
+    if (authStatePromise.current) {
+      console.log('Waiting for existing auth check to complete...');
+      await authStatePromise.current;
       return;
     }
     
@@ -141,85 +193,99 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     lastAuthCheck.current = now;
     console.log('Checking auth state...');
     
-    try {
-      if (!supabase) {
-        console.log('Supabase not configured, skipping auth check');
-        setUser(null);
-        setLoading(false);
-        return;
-      }
-      
-      // Add timeout for session check
-      const sessionPromise = supabase.auth.getSession();
-      const sessionTimeout = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Session check timeout')), 2000); // Even shorter timeout
-      });
-      
-      const sessionResult = await Promise.race([sessionPromise, sessionTimeout]);
-      console.log('Session check result:', { session: !!sessionResult.data.session, error: sessionResult.error });
-      
-      if (sessionResult.error) {
-        console.error('Error getting session:', sessionResult.error);
-        setUser(null);
-        setLoading(false);
-        return;
-      }
-      
-      if (sessionResult.data.session?.user) {
-        console.log('User found, fetching role...');
+    // Create a promise for this auth check
+    authStatePromise.current = (async () => {
+      try {
+        if (!supabase) {
+          console.log('Supabase not configured, skipping auth check');
+          setUser(null);
+          setLoading(false);
+          return;
+        }
+        
+        // Add timeout for session check with retry mechanism
+        let sessionResult;
         
         try {
-                     // Add timeout for role fetch
-           const rolePromise = fetchUserRole(sessionResult.data.session.user.id, roleCache);
-           const roleTimeout = new Promise<never>((_, reject) => {
-             setTimeout(() => reject(new Error('Role fetch timeout')), 2000); // Even shorter timeout
-           });
-           
-           const role = await Promise.race([rolePromise, roleTimeout]);
-          console.log('Role fetched:', role);
-          setUser({
-            id: sessionResult.data.session.user.id,
-            email: sessionResult.data.session.user.email ?? '',
-            role,
-          });
-        } catch (roleError) {
-          console.error('Role fetch failed, using default role:', roleError);
-          // Use default role if role fetch fails
-          setUser({
-            id: sessionResult.data.session.user.id,
-            email: sessionResult.data.session.user.email ?? '',
-            role: 'staff',
-          });
+          sessionResult = await retrySupabaseOperation(async () => {
+            console.log('Session check attempt');
+            
+            if (!supabase) {
+              throw new Error('Supabase not configured');
+            }
+            
+            const { data, error } = await supabase.auth.getSession();
+            
+            if (error) {
+              throw error;
+            }
+            
+            return { data, error: null };
+          }, 'Session check', 1, 1000); // 1 retry, 1s base delay
+          
+          console.log('Session check result:', { session: !!sessionResult.data.session, error: sessionResult.error });
+        } catch (error) {
+          console.error('Session check failed:', error);
+          // Assume no session if all attempts fail
+          setUser(null);
+          setLoading(false);
+          return;
         }
-      } else {
-        console.log('No session found, setting user to null');
+        
+        if (sessionResult?.error) {
+          console.error('Error getting session:', sessionResult.error);
+          setUser(null);
+          setLoading(false);
+          return;
+        }
+        
+        if (sessionResult?.data.session?.user) {
+          console.log('User found, fetching role...');
+          
+          try {
+            const role = await fetchUserRole(sessionResult.data.session.user.id, roleCache);
+            console.log('Role fetched:', role);
+            setUser({
+              id: sessionResult.data.session.user.id,
+              email: sessionResult.data.session.user.email ?? '',
+              role,
+            });
+          } catch (roleError) {
+            console.error('Role fetch failed, using default role:', roleError);
+            // Use default role if role fetch fails
+            setUser({
+              id: sessionResult.data.session.user.id,
+              email: sessionResult.data.session.user.email ?? '',
+              role: 'staff',
+            });
+          }
+        } else {
+          console.log('No session found, setting user to null');
+          setUser(null);
+        }
+      } catch (error) {
+        console.error('Error checking auth state:', error);
+        // In case of timeout or error, assume no user is logged in
         setUser(null);
+      } finally {
+        console.log('Setting loading to false');
+        setLoading(false);
+        isCheckingAuth.current = false;
+        authStatePromise.current = null;
       }
-    } catch (error) {
-      console.error('Error checking auth state:', error);
-      // In case of timeout or error, assume no user is logged in
-      setUser(null);
-    } finally {
-      console.log('Setting loading to false');
-      setLoading(false);
-      isCheckingAuth.current = false;
-    }
-  };
+    })();
+    
+    await authStatePromise.current;
+  }, []);
 
   // Handle visibility change and focus events with improved logic
   const handleVisibilityChange = useCallback(() => {
     if (typeof document !== 'undefined' && !document.hidden) {
       console.log('Tab became visible, checking if auth recheck is needed...');
       
-      // Always recheck if not initialized yet
-      if (!isInitialized.current) {
-        console.log('Not initialized yet, skipping visibility recheck');
-        return;
-      }
-      
-      // Only recheck if we're not currently loading and it's been a while
+      // Only recheck if not currently loading and it's been a while
       const now = Date.now();
-      if (!isCheckingAuth.current && !loading && (now - lastAuthCheck.current > 10000)) { // Increased to 10 seconds
+      if (!isCheckingAuth.current && !loading && (now - lastAuthCheck.current > 15000)) { // Increased to 15 seconds
         console.log('Tab became visible, rechecking auth state...');
         checkAuthState();
       } else {
@@ -231,172 +297,81 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const handleFocus = useCallback(() => {
     console.log('Window focused, checking if auth recheck is needed...');
     
-    // Always recheck if not initialized yet
-    if (!isInitialized.current) {
-      console.log('Not initialized yet, skipping focus recheck');
-      return;
-    }
-    
-    // Only recheck if we're not currently loading and it's been a while
+    // Only recheck if not currently loading and it's been a while
     const now = Date.now();
-    if (!isCheckingAuth.current && !loading && (now - lastAuthCheck.current > 5000)) {
+    if (!isCheckingAuth.current && !loading && (now - lastAuthCheck.current > 10000)) { // Increased to 10 seconds
       console.log('Window focused, rechecking auth state...');
       checkAuthState();
     } else {
       console.log('Skipping auth recheck - too recent, already loading, or already checking');
     }
-  }, [loading]);
+  }, [loading, checkAuthState]);
 
   // Force auth check on network recovery
   const handleOnline = useCallback(() => {
     console.log('Network connection restored, checking auth state...');
-    if (isInitialized.current && !isCheckingAuth.current && !loading) {
+    if (!isCheckingAuth.current && !loading) {
       checkAuthState();
     }
-  }, [loading]);
+  }, [loading, checkAuthState]);
 
   useEffect(() => {
     // Check if Supabase is properly configured
     if (!isSupabaseAvailable() || !supabase) {
       console.error('Supabase not configured - setting loading to false');
       setLoading(false);
-      isInitialized.current = true; // Mark as initialized even in offline mode
+      isInitialized.current = true;
       return;
     }
 
     console.log('Setting up auth provider...');
 
-    // Test Supabase connectivity first
-    const testConnection = async () => {
-      if (!supabase) {
-        console.log('Supabase not configured, skipping connection test');
-        return false;
-      }
-      
-      try {
-        console.log('Testing Supabase connection...');
-        
-        // Try multiple connection test methods
-        const testMethods = [
-          // Method 1: Simple health check endpoint (no auth required)
-          async () => {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/`, {
-              method: 'GET',
-              headers: {
-                'apikey': process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
-                'Authorization': `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''}`
-              },
-              signal: AbortSignal.timeout(3000)
-            });
-            // 401 is expected for unauthorized access, but means the service is reachable
-            return response.status === 401;
-          },
-          // Method 2: Supabase client getSession
-          async () => {
-            if (!supabase) return false;
-            const { data, error } = await supabase.auth.getSession();
-            // Even if there's an error, if it's not a network error, the connection works
-            return !error || !error.message.includes('fetch');
-          },
-          // Method 3: Simple ping test (no auth required)
-          async () => {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/v1/`, {
-              method: 'OPTIONS',
-              signal: AbortSignal.timeout(3000)
-            });
-            return response.status === 200 || response.status === 204;
-          }
-        ];
-
-        // Try each method until one succeeds
-        for (let i = 0; i < testMethods.length; i++) {
-          try {
-            console.log(`🔍 Trying connection test method ${i + 1}...`);
-            const success = await testMethods[i]();
-            if (success) {
-              console.log(`✅ Connection test method ${i + 1} successful`);
-              return true;
-            }
-          } catch (methodError) {
-            console.log(`❌ Connection test method ${i + 1} failed:`, methodError);
-            if (i === testMethods.length - 1) {
-              throw methodError;
-            }
-          }
-        }
-        
-        console.log('❌ All connection test methods failed');
-        return false;
-      } catch (error) {
-        console.error('Supabase connection test exception:', error);
-        
-        // Run diagnostics if this is the first failure
-        if (!diagnosticsRun.current) {
-          console.log('🔍 Running Supabase diagnostics due to connection failure...');
-          diagnosticsRun.current = true;
-          await diagnoseSupabaseConnection();
-        }
-        
-        return false;
-      }
-    };
-
     // Initialize auth provider with improved flow
     const initializeAuth = async () => {
       try {
-        // Test connection first
-        const isConnected = await testConnection();
-        
-        if (isConnected) {
-          console.log('Connection test passed, proceeding with auth check...');
+        // Set up auth state listener
+        const { data: listener } = supabase!.auth.onAuthStateChange(async (event, session) => {
+          console.log('Auth state changed:', event, session?.user?.email);
           
-          // Set up auth state listener only after successful connection
-          const { data: listener } = supabase!.auth.onAuthStateChange(async (event, session) => {
-            console.log('Auth state changed:', event, session?.user?.email);
-            
-            // Only handle specific auth events
-            if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
-              if (session?.user) {
-                try {
-                  // Add timeout for role fetch in auth state change
-                                     const rolePromise = fetchUserRole(session.user.id, roleCache);
-                                     const roleTimeout = new Promise<never>((_, reject) => {
-                     setTimeout(() => reject(new Error('Role fetch timeout')), 2000);
-                   });
-                  
-                  const role = await Promise.race([rolePromise, roleTimeout]);
-                  setUser({
-                    id: session.user.id,
-                    email: session.user.email ?? '',
-                    role,
-                  });
-                } catch (roleError) {
-                  console.error('Role fetch failed in auth state change, using default role:', roleError);
-                  // Use default role if role fetch fails
-                  setUser({
-                    id: session.user.id,
-                    email: session.user.email ?? '',
-                    role: 'staff',
-                  });
-                }
-              } else {
-                setUser(null);
+          // Only handle specific auth events
+          if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
+            if (session?.user) {
+              try {
+                const role = await fetchUserRole(session.user.id, roleCache);
+                console.log('Role fetched:', role);
+                const userWithRole = {
+                  id: session.user.id,
+                  email: session.user.email ?? '',
+                  role,
+                };
+                console.log('✅ Setting user with role:', userWithRole);
+                setUser(userWithRole);
+              } catch (roleError) {
+                console.error('Role fetch failed, using default role:', roleError);
+                // Use default role if role fetch fails
+                const userWithDefaultRole = {
+                  id: session.user.id,
+                  email: session.user.email ?? '',
+                  role: 'staff',
+                };
+                console.log('✅ Setting user with default role:', userWithDefaultRole);
+                setUser(userWithDefaultRole);
               }
-              setLoading(false);
+            } else {
+              setUser(null);
             }
-          });
+            setLoading(false);
+          }
+        });
 
-          authListener.current = listener;
-        } else {
-          console.log('Connection test failed, proceeding with offline mode...');
-        }
+        authListener.current = listener;
 
-        // Always proceed with auth check, even if connection failed
+        // Perform initial auth check
         await checkAuthState();
         
-        // Mark as initialized immediately after auth check
+        // Mark as initialized
         isInitialized.current = true;
-        console.log(`Auth provider initialized${isConnected ? '' : ' (offline mode)'}`);
+        console.log('Auth provider initialized');
         
       } catch (error) {
         console.error('Auth initialization error:', error);
@@ -431,15 +406,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         window.removeEventListener('online', handleOnline);
       }
     };
-  }, [handleVisibilityChange, handleFocus, handleOnline]);
+  }, [handleVisibilityChange, handleFocus, handleOnline, checkAuthState]);
 
   const signIn = async (email: string, password: string) => {
     if (!supabase) {
       throw new Error('Supabase not configured');
     }
     setLoading(true);
-    await supabase.auth.signInWithPassword({ email, password });
-    setLoading(false);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        throw error;
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   const signOut = async () => {

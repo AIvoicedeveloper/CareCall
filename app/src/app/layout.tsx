@@ -5,6 +5,8 @@ import { AuthProvider } from "./authProvider";
 import ClientAppLayout from "./components/ClientAppLayout";
 import DebugInfo from "../components/DebugInfo";
 import { ErrorBoundary } from "../components/ErrorBoundary";
+import { AuthErrorBoundary } from "../components/AuthErrorBoundary";
+import { DataErrorBoundary } from "../components/DataErrorBoundary";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -29,11 +31,15 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <ErrorBoundary>
-          <AuthProvider>
-            <ClientAppLayout>{children}</ClientAppLayout>
-            <DebugInfo />
-          </AuthProvider>
+        <ErrorBoundary errorType="ui">
+          <AuthErrorBoundary>
+            <AuthProvider>
+              <DataErrorBoundary>
+                <ClientAppLayout>{children}</ClientAppLayout>
+                <DebugInfo />
+              </DataErrorBoundary>
+            </AuthProvider>
+          </AuthErrorBoundary>
         </ErrorBoundary>
       </body>
     </html>
