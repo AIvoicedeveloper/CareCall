@@ -69,7 +69,7 @@ export default function DashboardPage() {
 
   // Use loading timeout monitoring - MOVED TO TOP to avoid temporal dead zone
   const { startLoadingTimeout, stopLoadingTimeout } = useLoadingTimeout({
-    timeout: 8000, // 8 second timeout
+    timeout: 12000, // Increased from 8s to 12s to be more lenient
     onTimeout: () => {
       console.error('🚨 Dashboard loading timeout! This might be the tab switch bug.');
       // Try to refetch data after timeout
@@ -114,12 +114,19 @@ export default function DashboardPage() {
     setLoading(true);
     setError("");
     try {
-      const { data, error } = await supabase
+      // Add timeout to prevent hanging requests
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Calls fetch timeout')), 10000);
+      });
+      
+      const fetchPromise = supabase
         .from("calls")
         .select("id, patient_id, call_time, call_status, patients(full_name)")
         .in("call_status", ["success", "failed"])
         .order("call_time", { ascending: false })
         .limit(10);
+      
+      const { data, error } = await Promise.race([fetchPromise, timeoutPromise]);
       
       if (error) {
         setError(error.message);
@@ -133,6 +140,7 @@ export default function DashboardPage() {
         );
       }
     } catch (err: any) {
+      console.error('Calls fetch error:', err);
       setError("Failed to fetch calls");
       setCalls([]);
     } finally {

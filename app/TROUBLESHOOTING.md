@@ -1,133 +1,239 @@
-# 🔧 Supabase Connection Troubleshooting Guide
+# Troubleshooting Guide
 
-## 🚨 Common Connection Issues & Solutions
+## Common Issues and Solutions
 
-### 1. **Connection Test Timeout**
-**Symptoms:** `Error: Connection test timeout`
+### 1. "Role fetch timeout" Errors
 
-**Solutions:**
-- **Check your Supabase project status**: Visit [https://status.supabase.com](https://status.supabase.com)
-- **Verify your credentials**: Double-check your `.env.local` file
-- **Try a different network**: Switch from WiFi to mobile hotspot or vice versa
-- **Clear browser cache**: Hard refresh (Ctrl+F5) or clear browser data
-- **Check firewall/antivirus**: Temporarily disable to test
+**Symptoms:**
+- Console shows "Role fetch timeout (10000ms)" errors
+- Dashboard sections stuck in "Loading..." state
+- User role not displaying correctly
 
-### 2. **CORS Issues**
-**Symptoms:** Network errors in console, connection failures
-
-**Solutions:**
-- **Check Supabase project settings**: Go to Settings → API → CORS
-- **Add your domain**: Add `localhost:3000` to allowed origins
-- **Use correct URL format**: Ensure URL starts with `https://`
-
-### 3. **Environment Variables Not Loading**
-**Symptoms:** "Missing Supabase environment variables"
+**Causes:**
+- Missing or incorrect Supabase environment variables
+- Network connectivity issues
+- Supabase service unavailable
+- Database schema not properly set up
 
 **Solutions:**
-- **Restart development server**: `npm run dev`
-- **Check file location**: `.env.local` must be in the `app` directory
-- **Verify file format**: No spaces around `=` in `.env.local`
-- **Check file encoding**: Use UTF-8 encoding
 
-### 4. **Network/Firewall Issues**
-**Symptoms:** Timeout errors, connection refused
+#### A. Check Environment Variables
+1. Verify `.env.local` file exists in the `app` directory
+2. Ensure variables are correctly named:
+   ```
+   NEXT_PUBLIC_SUPABASE_URL=your_project_url
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
+   ```
+3. Restart the development server after making changes
+
+#### B. Test Supabase Connection
+1. Use the "Test Supabase Connection" button on the dashboard
+2. Check browser console for specific error messages
+3. Verify your Supabase project is active and accessible
+
+#### C. Check Network Connectivity
+1. Ensure stable internet connection
+2. Check if Supabase is accessible from your network
+3. Try accessing your Supabase dashboard directly
+
+### 2. Dashboard Loading States
+
+**Symptoms:**
+- All dashboard sections showing "Loading..."
+- No data displayed even after successful authentication
+- Timeout errors in console
 
 **Solutions:**
-- **Try different network**: Switch networks or use mobile hotspot
-- **Check corporate firewall**: Contact IT if on corporate network
-- **VPN issues**: Disable VPN temporarily
-- **DNS issues**: Try using `8.8.8.8` as DNS
 
-### 5. **Supabase Project Issues**
-**Symptoms:** 401/403 errors, service unavailable
+#### A. Increase Timeout Settings
+The application has been updated with more lenient timeout settings:
+- Role fetch: 15 seconds (increased from 10)
+- Dashboard loading: 12 seconds (increased from 8)
+- Supabase operations: Progressive timeouts (8s, 12s, 15s)
+
+#### B. Check Database Tables
+1. Use the "Test Database Tables" button on the dashboard
+2. Ensure all required tables exist:
+   - `users` table with `role` column
+   - `patients` table
+   - `calls` table
+   - `symptom_reports` table
+
+#### C. Verify RLS Policies
+Make sure your Supabase Row Level Security policies allow the necessary operations:
+
+```sql
+-- Example RLS policy for users table
+CREATE POLICY "Users can view their own data" ON users
+FOR SELECT USING (auth.uid() = id);
+
+-- Example RLS policy for patients table
+CREATE POLICY "Authenticated users can view patients" ON patients
+FOR SELECT USING (auth.role() = 'authenticated');
+```
+
+### 3. Authentication Issues
+
+**Symptoms:**
+- Login not working
+- User session not persisting
+- "Authentication failed" errors
 
 **Solutions:**
-- **Check project status**: Ensure project is active in Supabase dashboard
-- **Verify API keys**: Regenerate anon key if needed
-- **Check project region**: Some regions may have issues
-- **Contact Supabase support**: If project seems corrupted
 
-## 🔍 Diagnostic Steps
+#### A. Check Supabase Auth Settings
+1. Verify email confirmation is not required (for testing)
+2. Check if your email domain is allowed
+3. Ensure auth is enabled in your Supabase project
 
-### Step 1: Check Console Output
-Look for these messages in browser console:
-- ✅ `Supabase configuration found`
-- ✅ `Connection test successful`
-- ❌ `Connection test timeout`
-- ❌ `Missing Supabase environment variables`
+#### B. Clear Browser Data
+1. Clear browser cache and cookies
+2. Try in an incognito/private window
+3. Check if the issue persists
 
-### Step 2: Test Network Connectivity
+### 4. Tab Switch Recovery Issues
+
+**Symptoms:**
+- Application becomes unresponsive after switching tabs
+- Loading states persist after returning to the tab
+- Console shows recovery attempt messages
+
+**Solutions:**
+
+#### A. Manual Recovery
+1. Refresh the page (Ctrl+F5 or Cmd+Shift+R)
+2. Wait for the application to reload completely
+3. Check if the issue persists
+
+#### B. Check Browser Settings
+1. Ensure JavaScript is enabled
+2. Check if any browser extensions are interfering
+3. Try a different browser
+
+### 5. Database Schema Issues
+
+**Symptoms:**
+- "Table does not exist" errors
+- Missing data in dashboard sections
+- Incorrect data relationships
+
+**Solutions:**
+
+#### A. Run Database Setup
+Execute the SQL commands from `SUPABASE_SETUP.md` in your Supabase SQL editor:
+
+```sql
+-- Create users table
+CREATE TABLE users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email TEXT UNIQUE NOT NULL,
+  name TEXT,
+  role TEXT DEFAULT 'staff' CHECK (role IN ('admin', 'doctor', 'staff')),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create patients table
+CREATE TABLE patients (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  full_name TEXT NOT NULL,
+  phone_number TEXT,
+  last_visit DATE,
+  condition_type TEXT,
+  doctor_id UUID REFERENCES users(id),
+  call_status TEXT DEFAULT 'not called yet',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create calls table
+CREATE TABLE calls (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id UUID REFERENCES patients(id),
+  call_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  call_status TEXT DEFAULT 'to be called',
+  notes TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create symptom_reports table
+CREATE TABLE symptom_reports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id UUID REFERENCES patients(id),
+  risk_level TEXT CHECK (risk_level IN ('low', 'medium', 'high')),
+  escalate BOOLEAN DEFAULT FALSE,
+  symptoms TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+#### B. Insert Sample Data
+Add some test data to verify the setup:
+
+```sql
+-- Insert a test user
+INSERT INTO users (email, name, role) 
+VALUES ('admin@example.com', 'Admin User', 'admin');
+
+-- Insert test patients
+INSERT INTO patients (full_name, phone_number, condition_type) 
+VALUES 
+  ('John Doe', '+1234567890', 'Hypertension'),
+  ('Jane Smith', '+0987654321', 'Diabetes');
+```
+
+### 6. Performance Issues
+
+**Symptoms:**
+- Slow loading times
+- Frequent timeouts
+- Unresponsive interface
+
+**Solutions:**
+
+#### A. Check Network Performance
+1. Test your internet connection speed
+2. Try from a different network
+3. Check if Supabase is experiencing issues
+
+#### B. Optimize Queries
+The application has been updated with:
+- Better caching mechanisms
+- More efficient retry logic
+- Progressive timeout handling
+
+#### C. Monitor Resource Usage
+1. Check browser memory usage
+2. Close unnecessary browser tabs
+3. Restart the development server if needed
+
+## Quick Setup Commands
+
 ```bash
-# Test basic internet
-curl https://httpbin.org/get
+# Navigate to app directory
+cd app
 
-# Test Supabase directly (replace with your URL)
-curl https://your-project.supabase.co/rest/v1/
+# Run setup script
+npm run setup
+
+# Install dependencies (if needed)
+npm install
+
+# Start development server
+npm run dev
 ```
 
-### Step 3: Verify Environment Variables
-Check your `.env.local` file:
-```env
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-```
+## Getting Help
 
-### Step 4: Test in Different Browser
-- Try Chrome, Firefox, Safari
-- Use incognito/private mode
-- Clear browser cache and cookies
+1. **Check the Console**: Open browser DevTools and look for specific error messages
+2. **Review Logs**: Check the browser console for detailed error information
+3. **Test Connection**: Use the dashboard's connection test buttons
+4. **Verify Setup**: Follow the `SUPABASE_SETUP.md` guide step by step
 
-## 🛠️ Advanced Solutions
+## Emergency Recovery
 
-### 1. **Increase Timeout Values**
-If you're on a slow connection, increase timeouts in the code:
-```typescript
-// In authProvider.tsx, increase timeout from 2000 to 5000
-setTimeout(() => reject(new Error('Connection test timeout')), 5000);
-```
+If the application is completely unresponsive:
 
-### 2. **Use Different Connection Test**
-The app now tries multiple connection methods. If one fails, it tries others.
-
-### 3. **Check Supabase Project Settings**
-- Go to your Supabase dashboard
-- Settings → API → Check CORS settings
-- Settings → Database → Check if database is active
-
-### 4. **Regenerate API Keys**
-- Go to Settings → API
-- Click "Regenerate" for the anon key
-- Update your `.env.local` file
-
-## 📞 When to Contact Support
-
-**Contact Supabase Support if:**
-- All diagnostic tests pass but connection still fails
-- You get 500+ errors from Supabase endpoints
-- Your project appears corrupted or inaccessible
-- You're on a supported network and all troubleshooting fails
-
-**Contact your IT department if:**
-- You're on a corporate network with strict firewall rules
-- You need to whitelist Supabase domains
-- VPN is required and blocking connections
-
-## 🎯 Quick Fix Checklist
-
-- [ ] Restart development server
-- [ ] Clear browser cache
-- [ ] Check `.env.local` file format
-- [ ] Try different network
-- [ ] Disable VPN/firewall temporarily
-- [ ] Check Supabase project status
-- [ ] Verify CORS settings
-- [ ] Test in incognito mode
-- [ ] Try different browser
-- [ ] Check console for specific error messages
-
-## 🔗 Useful Links
-
-- [Supabase Status Page](https://status.supabase.com)
-- [Supabase Documentation](https://supabase.com/docs)
-- [Supabase Community](https://github.com/supabase/supabase/discussions)
-- [Supabase Support](https://supabase.com/support) 
+1. **Hard Refresh**: Ctrl+F5 (Windows) or Cmd+Shift+R (Mac)
+2. **Clear Cache**: Clear browser cache and cookies
+3. **Restart Server**: Stop and restart the development server
+4. **Check Environment**: Verify `.env.local` file exists and has correct values
+5. **Test Supabase**: Ensure your Supabase project is active and accessible 

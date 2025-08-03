@@ -145,7 +145,7 @@ export async function retryWithBackoff<T>(
   fn: () => Promise<T>,
   maxRetries: number = 3,
   baseDelay: number = 1000,
-  timeoutMs: number = 10000
+  timeoutMs: number = 15000 // Increased from 10000 to 15000
 ): Promise<T> {
   let lastError: Error;
   
@@ -188,7 +188,7 @@ export async function retryWithBackoff<T>(
 export async function retrySupabaseOperation<T>(
   operation: () => Promise<T>,
   operationName: string = 'Supabase operation',
-  maxRetries: number = 2,
+  maxRetries: number = 3, // Increased from 2 to 3
   baseDelay: number = 1000
 ): Promise<T> {
   let lastError: Error;
@@ -197,8 +197,8 @@ export async function retrySupabaseOperation<T>(
     try {
       console.log(`${operationName} attempt ${attempt + 1}/${maxRetries + 1}`);
       
-      // Progressive timeout: 6s, 8s, 10s (to match Supabase client timeout)
-      const timeoutMs = 6000 + (attempt * 2000);
+      // Progressive timeout: 8s, 12s, 15s (more lenient than before)
+      const timeoutMs = 8000 + (attempt * 4000);
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error(`${operationName} timeout (${timeoutMs}ms)`)), timeoutMs);
       });

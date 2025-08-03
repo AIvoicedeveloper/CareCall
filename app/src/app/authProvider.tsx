@@ -5,6 +5,7 @@ import { supabase, isSupabaseAvailable } from "./supabaseClient";
 import { diagnoseSupabaseConnection } from "../lib/supabaseDiagnostics";
 import { quickConnectionTest } from "../lib/quickConnectionTest";
 import { retryWithBackoff, isRetryableError, getAdaptiveTimeout, retrySupabaseOperation, testSupabaseConnectivity } from "../lib/connectionUtils";
+import { fetchUserRoleWithFallback } from "../lib/fetchRole";
 
 export type User = {
   id: string;
@@ -22,86 +23,31 @@ type AuthContextType = {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 async function fetchUserRole(userId: string, roleCache: React.MutableRefObject<Map<string, { role: string; timestamp: number }>>): Promise<string> {
-  console.log('🔍 Starting role fetch for userId:', userId);
-  
-  // Check cache first
-  const cached = roleCache.current.get(userId);
-  if (cached && (Date.now() - cached.timestamp) < 300000) { // 5 minutes cache
-    console.log('✅ Using cached role:', cached.role);
-    return cached.role;
-  }
-  
-  if (!supabase) {
-    console.log('⚠️ Supabase not configured, using default role');
-    return 'staff';
-  }
-  
-  console.log('🔍 Supabase configured, attempting role fetch...');
-  
-  // Test connectivity first
   try {
-    console.log('🔍 Testing Supabase connectivity...');
-    const connectivityResult = await testSupabaseConnectivity();
-    console.log('🔍 Connectivity test result:', connectivityResult);
+    console.log('🔍 Starting role fetch for userId:', userId);
     
-    if (!connectivityResult.isConnected) {
-      console.log('⚠️ Supabase connectivity test failed, using fallback role determination');
-      return await determineRoleFromMetadata(userId, roleCache);
-    } else {
-      console.log('✅ Supabase connectivity test passed, proceeding with role fetch');
+    // Check cache first (temporarily disabled to test Edge Function)
+    const cached = roleCache.current.get(userId);
+    if (cached && Date.now() - cached.timestamp < 300000) { // 5 minute cache
+      console.log('✅ Using cached role:', cached.role);
+      // Temporarily clear cache to test Edge Function
+      roleCache.current.delete(userId);
+      console.log('🔄 Cache cleared, will fetch fresh role from Edge Function');
     }
-  } catch (error) {
-    console.log('⚠️ Connectivity test failed, proceeding with role fetch anyway:', error);
-  }
-  
-  // Try to fetch role from users table
-  try {
-    const role = await retrySupabaseOperation(async () => {
-      console.log('🔍 Attempting to fetch role from users table for userId:', userId);
-      
-      if (!supabase) {
-        throw new Error('Supabase not configured');
-      }
-      
-      console.log('🔍 Executing Supabase query...');
-      const { data, error } = await supabase
-        .from('users')
-        .select('role')
-        .eq('id', userId)
-        .single();
-      
-      console.log('🔍 Role fetch result:', { data, error });
-      
-      if (error) {
-        // Check if it's a table doesn't exist error
-        if (error.message.includes('relation "users" does not exist') || 
-            error.message.includes('does not exist')) {
-          console.log('⚠️ Users table does not exist, using default role');
-          return 'staff';
-        }
-        
-        console.log('❌ Role fetch error:', error.message);
-        throw error; // Let retrySupabaseOperation handle retryable errors
-      }
-      
-      if (!data) {
-        console.log('⚠️ No user data found, using default role');
-        return 'staff';
-      }
-      
-      const userRole = data.role || 'staff';
-      console.log('✅ User role found:', userRole);
-      
-      // Cache the successful result
-      roleCache.current.set(userId, { role: userRole, timestamp: Date.now() });
-      
-      return userRole;
-    }, 'Role fetch', 2, 1000); // 2 retries, 1s base delay
     
-    console.log('✅ Role fetch completed successfully:', role);
+    console.log('🔍 Using Edge Function to fetch role...');
+    
+    // Use the Edge Function with fallback
+    const { role } = await fetchUserRoleWithFallback(userId);
+    
+    console.log('✅ Role fetched successfully:', role);
+    
+    // Cache the successful result
+    roleCache.current.set(userId, { role, timestamp: Date.now() });
+    
     return role;
   } catch (error) {
-    console.error('❌ Role fetch from users table failed:', error);
+    console.error('❌ Role fetch failed:', error);
     
     // Fallback: try to determine role from user metadata or email
     return await determineRoleFromMetadata(userId, roleCache);

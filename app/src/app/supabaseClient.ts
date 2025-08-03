@@ -43,8 +43,8 @@ export const supabase = isSupabaseConfigured
         console.log('🔍 Supabase fetch request:', url);
         return fetch(url, {
           ...options,
-          // Add timeout to prevent hanging requests
-          signal: AbortSignal.timeout(10000) // 10 second timeout
+          // Add timeout to prevent hanging requests - increased from 10s to 15s
+          signal: AbortSignal.timeout(15000) // 15 second timeout
         });
       }
     })

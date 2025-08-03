@@ -24,11 +24,8 @@ interface Call {
 export default function PatientProfilePage() {
   const [patient, setPatient] = useState<Patient | null>(null);
   const [calls, setCalls] = useState<Call[]>([]);
-  const [symptoms, setSymptoms] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingSymptoms, setLoadingSymptoms] = useState(false);
   const [error, setError] = useState("");
-  const [errorSymptoms, setErrorSymptoms] = useState("");
 
   const { user } = useAuth();
   const params = useParams();
@@ -39,11 +36,8 @@ export default function PatientProfilePage() {
   const resetStates = useCallback(() => {
     setPatient(null);
     setCalls([]);
-    setSymptoms([]);
     setLoading(false);
-    setLoadingSymptoms(false);
     setError("");
-    setErrorSymptoms("");
   }, []);
 
   // Fetch patient data with abort signal support
@@ -89,65 +83,13 @@ export default function PatientProfilePage() {
     }
   }, [id]);
 
-  // Fetch symptoms with abort signal support
-  const fetchSymptoms = useCallback(async () => {
-    if (!id || !supabase) return;
-    
-    setLoadingSymptoms(true);
-    setErrorSymptoms("");
-    try {
-      // First try the RPC function
-      const { data: rpcData, error: rpcError } = await supabase
-        .rpc('get_symptom_reports_for_patient', { pid: id });
-      
-      if (!rpcError && rpcData) {
-        setSymptoms(rpcData as any[]);
-        return;
-      }
-      
-      // Fallback: fetch symptom_reports directly
-      console.log('RPC function failed, trying direct query...');
-      const { data, error } = await supabase
-        .from("symptom_reports")
-        .select(`
-          id,
-          symptoms,
-          risk_level,
-          escalate,
-          created_at,
-          calls (
-            id,
-            call_time,
-            patient_id
-          )
-        `)
-        .eq("calls.patient_id", id)
-        .order("created_at", { ascending: false });
-      
-      if (error) {
-        console.log('Direct query also failed:', error);
-        setErrorSymptoms(error.message);
-        setSymptoms([]);
-      } else {
-        setSymptoms(data as any[]);
-      }
-    } catch (err: any) {
-      console.error('Failed to fetch symptoms:', err);
-      setErrorSymptoms("Failed to fetch symptoms");
-      setSymptoms([]);
-    } finally {
-      setLoadingSymptoms(false);
-    }
-  }, [id]);
-
   // Function to fetch all data with abort signal
   const fetchAllData = useCallback(() => {
     if (!user || !id) return;
     
     console.log('Fetching patient profile data...');
     fetchPatient();
-    fetchSymptoms();
-  }, [user, id, fetchPatient, fetchSymptoms]);
+  }, [user, id, fetchPatient]);
 
   // Handle visibility/focus events for refetching
   const handleRefetchOnVisibility = useCallback(() => {
@@ -222,35 +164,6 @@ export default function PatientProfilePage() {
                     ))}
                   </tbody>
                 </table>
-              )}
-            </div>
-            <div className="mb-6 p-4 bg-white rounded shadow">
-              <h2 className="text-xl font-semibold mb-2">Symptom History</h2>
-              {loadingSymptoms ? (
-                <div>Loading...</div>
-              ) : errorSymptoms ? (
-                <div className="text-red-600">{errorSymptoms}</div>
-              ) : symptoms.length === 0 ? (
-                <div>No symptom reports found for this patient.</div>
-              ) : (
-                <ul className="space-y-4">
-                  {symptoms.map((s) => (
-                    <li key={s.id} className="border-l-4 border-blue-400 pl-4">
-                      <div className="text-sm text-gray-500 mb-1">
-                        {s.calls?.call_time ? new Date(s.calls.call_time).toLocaleString() : new Date(s.created_at).toLocaleString()}
-                      </div>
-                      <div className="font-semibold">
-                        Symptoms: {
-                          s.symptoms
-                            ? (typeof s.symptoms === "object"
-                                ? Object.entries(s.symptoms).map(([k, v]) => v ? k : null).filter(Boolean).join(", ")
-                                : String(s.symptoms))
-                            : (patient?.condition_type || "N/A")
-                        }
-                      </div>
-                    </li>
-                  ))}
-                </ul>
               )}
             </div>
           </>

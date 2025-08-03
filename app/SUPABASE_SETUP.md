@@ -1,7 +1,7 @@
 # Supabase Setup Guide
 
 ## Issue
-The application is currently stuck in a loading state because Supabase environment variables are not configured.
+The application is currently experiencing "Role fetch timeout" errors and stuck loading states because Supabase environment variables are not properly configured.
 
 ## Solution
 You need to create a `.env.local` file in the `app` directory with your Supabase credentials.
@@ -36,12 +36,78 @@ You need to create a `.env.local` file in the `app` directory with your Supabase
 ### Example `.env.local`:
 ```
 NEXT_PUBLIC_SUPABASE_URL=https://abcdefghijklmnop.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFiY2RlZmdoaWprbG1ub3AiLCJyb2xlIjoiYW5vbiIsImlhdCI6MTYzNzQ5NjAwMCwiZXhwIjoxOTUzMDcyMDAwfQ.example
 ```
 
 ### Database Schema
 Make sure your Supabase database has the following tables:
-- `users` table with columns: `id`, `email`, `name`, `role`
-- `patients` table with columns: `id`, `full_name`, `phone_number`, `last_visit`, `condition_type`, `doctor_id`, `call_status`
 
-After setting up the environment variables, the application should load properly and show the login page instead of being stuck in a loading state. 
+#### Users Table
+```sql
+CREATE TABLE users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email TEXT UNIQUE NOT NULL,
+  name TEXT,
+  role TEXT DEFAULT 'staff' CHECK (role IN ('admin', 'doctor', 'staff')),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+#### Patients Table
+```sql
+CREATE TABLE patients (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  full_name TEXT NOT NULL,
+  phone_number TEXT,
+  last_visit DATE,
+  condition_type TEXT,
+  doctor_id UUID REFERENCES users(id),
+  call_status TEXT DEFAULT 'not called yet',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+#### Calls Table
+```sql
+CREATE TABLE calls (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id UUID REFERENCES patients(id),
+  call_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  call_status TEXT DEFAULT 'to be called',
+  notes TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+#### Symptom Reports Table
+```sql
+CREATE TABLE symptom_reports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_id UUID REFERENCES patients(id),
+  risk_level TEXT CHECK (risk_level IN ('low', 'medium', 'high')),
+  escalate BOOLEAN DEFAULT FALSE,
+  symptoms TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+### Troubleshooting
+
+1. **Check Console for Errors**: Open browser DevTools and check the Console tab for specific error messages.
+
+2. **Verify Environment Variables**: Make sure your `.env.local` file is in the correct location (`app/.env.local`) and has the correct format.
+
+3. **Test Connection**: Use the "Test Supabase Connection" button on the dashboard to verify connectivity.
+
+4. **Check Network**: Ensure your internet connection is stable and you can access Supabase.
+
+5. **Database Permissions**: Make sure your Supabase RLS (Row Level Security) policies allow the necessary operations.
+
+### Common Issues
+
+- **"Role fetch timeout"**: Usually indicates network issues or missing environment variables
+- **"Table does not exist"**: Database schema not set up correctly
+- **"Authentication failed"**: Check your Supabase credentials
+- **"Network error"**: Check your internet connection and firewall settings
+
+After setting up the environment variables and database schema, the application should load properly and show the dashboard instead of being stuck in loading states. 
