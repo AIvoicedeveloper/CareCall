@@ -87,7 +87,6 @@ export default function PatientProfilePage() {
   const fetchAllData = useCallback(() => {
     if (!user || !id) return;
     
-    console.log('Fetching patient profile data...');
     fetchPatient();
   }, [user, id, fetchPatient]);
 
@@ -98,7 +97,6 @@ export default function PatientProfilePage() {
     const timeSinceLastFetch = Date.now() - lastFetchTime.current;
     // Only refetch if it's been more than 30 seconds since last fetch
     if (timeSinceLastFetch > 30000) {
-      console.log('Tab regained focus/visibility, refetching patient profile data...');
       fetchAllData();
     }
   }, [user, id, fetchAllData]);

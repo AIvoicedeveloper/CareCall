@@ -12,11 +12,6 @@ if (!isSupabaseConfigured) {
   console.error('NEXT_PUBLIC_SUPABASE_ANON_KEY:', supabaseAnonKey ? 'Set' : 'Missing');
   console.error('Please configure your Supabase environment variables in .env.local');
   console.error('See SUPABASE_SETUP.md for setup instructions');
-} else {
-  console.log('Supabase configuration found:', {
-    url: supabaseUrl ? 'Set' : 'Missing',
-    key: supabaseAnonKey ? 'Set' : 'Missing'
-  });
 }
 
 // Only create the client if environment variables are configured
@@ -40,7 +35,6 @@ export const supabase = isSupabaseConfigured
       },
       // Add fetch options for better error handling
       fetch: (url, options = {}) => {
-        console.log('🔍 Supabase fetch request:', url);
         return fetch(url, {
           ...options,
           // Add timeout to prevent hanging requests - increased from 10s to 15s
@@ -56,10 +50,10 @@ export const isSupabaseAvailable = () => isSupabaseConfigured && supabase !== nu
 // Add global error handling for network issues (client-side only)
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
-    console.log('Network connection restored');
+    // Network connection restored
   });
 
   window.addEventListener('offline', () => {
-    console.log('Network connection lost');
+    // Network connection lost
   });
 }

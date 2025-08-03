@@ -23,8 +23,6 @@ export function useVisibilityFocus({
       lastVisibilityChange.current = Date.now();
 
       if (isVisible.current !== wasVisible) {
-        console.log(`Tab became ${isVisible.current ? 'visible' : 'hidden'}`);
-        
         if (onVisibilityChange) {
           try {
             onVisibilityChange(isVisible.current);
@@ -45,8 +43,6 @@ export function useVisibilityFocus({
       isFocused.current = document.hasFocus();
 
       if (isFocused.current !== wasFocused) {
-        console.log(`Window ${isFocused.current ? 'focused' : 'blurred'}`);
-        
         if (onFocusChange) {
           try {
             onFocusChange(isFocused.current);
@@ -68,13 +64,10 @@ export function useVisibilityFocus({
     
     // If we haven't had a visibility change in 30 seconds, something might be stuck
     if (timeSinceVisibilityChange > 30000) {
-      console.warn('No visibility changes detected for 30s, checking for stuck state...');
-      
       // Force a visibility check
       try {
         const currentHidden = document.hidden;
         if (isVisible.current !== !currentHidden) {
-          console.log('Detected stuck visibility state, forcing update...');
           isVisible.current = !currentHidden;
           lastVisibilityChange.current = Date.now();
           
@@ -90,8 +83,6 @@ export function useVisibilityFocus({
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
-
-    console.log('useVisibilityFocus initialized');
 
     // Set up event listeners with error handling
     const safeAddEventListener = (event: string, handler: EventListener) => {

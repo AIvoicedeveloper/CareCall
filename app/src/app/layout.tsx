@@ -3,7 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "./authProvider";
 import ClientAppLayout from "./components/ClientAppLayout";
-import DebugInfo from "../components/DebugInfo";
+
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { AuthErrorBoundary } from "../components/AuthErrorBoundary";
 import { DataErrorBoundary } from "../components/DataErrorBoundary";
@@ -36,7 +36,6 @@ export default function RootLayout({
             <AuthProvider>
               <DataErrorBoundary>
                 <ClientAppLayout>{children}</ClientAppLayout>
-                <DebugInfo />
               </DataErrorBoundary>
             </AuthProvider>
           </AuthErrorBoundary>

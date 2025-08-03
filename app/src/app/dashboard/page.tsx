@@ -16,8 +16,6 @@ import { useAuth } from "../authProvider";
 import { useVisibilityFocus } from "../../lib/useVisibilityFocus";
 import { useLoadingTimeout } from "../../lib/useLoadingTimeout";
 import { useTabSwitchRecovery } from "../../lib/useTabSwitchRecovery";
-import { testSupabaseConnection } from "../../lib/testConnection";
-import { testDatabaseTables } from "../../lib/testDatabaseTables";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
@@ -60,7 +58,6 @@ export default function DashboardPage() {
 
   // Force reset all loading states (for timeout handling)
   const forceResetLoadingStates = useCallback(() => {
-    console.log('🔧 Force resetting all loading states...');
     setLoading(false);
     setLoadingUpcoming(false);
     setLoadingStats(false);
@@ -71,14 +68,10 @@ export default function DashboardPage() {
   const { startLoadingTimeout, stopLoadingTimeout } = useLoadingTimeout({
     timeout: 12000, // Increased from 8s to 12s to be more lenient
     onTimeout: () => {
-      console.error('🚨 Dashboard loading timeout! This might be the tab switch bug.');
       // Try to refetch data after timeout
       setTimeout(() => {
         if (user && fetchAllDataRef.current) {
-          console.log('🔄 Attempting to refetch after timeout...');
           fetchAllDataRef.current();
-        } else {
-          console.log('🔄 Timeout occurred, but fetchAllData not yet available');
         }
       }, 1000);
     },
@@ -305,7 +298,6 @@ export default function DashboardPage() {
   const fetchAllData = useCallback(() => {
     if (!user) return;
     
-    console.log('Fetching all dashboard data...');
     lastFetchTime.current = Date.now();
     
     // Start loading timeout monitoring
@@ -333,10 +325,7 @@ export default function DashboardPage() {
     const timeSinceLastFetch = Date.now() - lastFetchTime.current;
     // Only refetch if it's been more than 30 seconds since last fetch
     if (timeSinceLastFetch > 30000) {
-      console.log('Tab regained focus/visibility, refetching data...');
       fetchAllData();
-    } else {
-      console.log('Recent fetch detected, skipping refetch');
     }
   }, [user, fetchAllData]);
 
@@ -363,10 +352,7 @@ export default function DashboardPage() {
     maxStuckTime: 12000, // 12 seconds before nuclear option
     reloadAsLastResort: true, // Enable the nuclear option
     onRecoveryAttempt: (method) => {
-      console.log(`🚨 Tab switch recovery attempted via: ${method}`);
-      if (method === 'page-reload') {
-        console.log('💣 About to reload page due to persistent loading bug');
-      }
+      // Recovery attempted
     }
   });
 
@@ -394,101 +380,12 @@ export default function DashboardPage() {
     };
   }, [user?.id]); // Only depend on user ID, not the functions
 
-  const [testingConnection, setTestingConnection] = useState(false);
-  const [connectionResults, setConnectionResults] = useState<any>(null);
-  const [testingTables, setTestingTables] = useState(false);
-  const [tableResults, setTableResults] = useState<any>(null);
 
-  const handleTestConnection = async () => {
-    setTestingConnection(true);
-    try {
-      const results = await testSupabaseConnection();
-      setConnectionResults(results);
-    } catch (error) {
-      console.error('Connection test failed:', error);
-      setConnectionResults({ errors: ['Connection test failed'] });
-    } finally {
-      setTestingConnection(false);
-    }
-  };
-
-  const handleTestTables = async () => {
-    setTestingTables(true);
-    try {
-      const results = await testDatabaseTables();
-      setTableResults(results);
-    } catch (error) {
-      console.error('Table test failed:', error);
-      setTableResults({ errors: ['Table test failed'] });
-    } finally {
-      setTestingTables(false);
-    }
-  };
 
   return (
     <ProtectedRoute>
       <div>
         <h1 className="text-2xl font-bold mb-4">Dashboard</h1>
-        
-        {/* Connection Test Section */}
-        <section className="mb-8">
-          <h2 className="text-xl font-semibold mb-2">Connection Diagnostics</h2>
-          <div className="bg-white rounded shadow p-4">
-            <div className="flex gap-4 mb-4">
-              <button
-                onClick={handleTestConnection}
-                disabled={testingConnection}
-                className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded disabled:opacity-50"
-              >
-                {testingConnection ? 'Testing...' : 'Test Supabase Connection'}
-              </button>
-              
-              <button
-                onClick={handleTestTables}
-                disabled={testingTables}
-                className="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded disabled:opacity-50"
-              >
-                {testingTables ? 'Testing...' : 'Test Database Tables'}
-              </button>
-            </div>
-            
-            {connectionResults && (
-              <div className="mt-4 p-4 bg-gray-100 rounded">
-                <h3 className="font-semibold mb-2">Connection Test Results:</h3>
-                <div className="text-sm">
-                  <div>Client Available: {connectionResults.clientAvailable ? '✅' : '❌'}</div>
-                  <div>Auth Service: {connectionResults.authTest ? '✅' : '❌'}</div>
-                  <div>Database Service: {connectionResults.databaseTest ? '✅' : '❌'}</div>
-                  {connectionResults.errors && connectionResults.errors.length > 0 && (
-                    <div className="mt-2">
-                      <div className="font-semibold text-red-600">Errors:</div>
-                      {connectionResults.errors.map((error: string, index: number) => (
-                        <div key={index} className="text-red-600">• {error}</div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-            
-            {tableResults && (
-              <div className="mt-4 p-4 bg-gray-100 rounded">
-                <h3 className="font-semibold mb-2">Table Test Results:</h3>
-                <div className="text-sm">
-                  <div>Users Table Exists: {tableResults.usersTableExists ? '✅' : '❌'}</div>
-                  {tableResults.errors && tableResults.errors.length > 0 && (
-                    <div className="mt-2">
-                      <div className="font-semibold text-red-600">Errors:</div>
-                      {tableResults.errors.map((error: string, index: number) => (
-                        <div key={index} className="text-red-600">• {error}</div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
         <section className="mb-8">
           <h2 className="text-xl font-semibold mb-2">Recent Calls</h2>
           <div className="bg-white rounded shadow p-4">

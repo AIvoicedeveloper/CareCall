@@ -161,20 +161,15 @@ export async function retryWithBackoff<T>(
     } catch (error) {
       lastError = error instanceof Error ? error : new Error('Unknown error');
       
-      console.log(`Attempt ${attempt + 1}/${maxRetries + 1} failed:`, lastError.message);
-      
       if (attempt === maxRetries) {
-        console.log('All retry attempts exhausted');
         throw lastError;
       }
       
       if (!isRetryableError(error)) {
-        console.log('Non-retryable error, stopping retries');
         throw lastError;
       }
       
       const delay = getBackoffDelay(attempt, baseDelay);
-      console.log(`Retry attempt ${attempt + 1}/${maxRetries + 1} after ${delay}ms delay`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
@@ -195,8 +190,6 @@ export async function retrySupabaseOperation<T>(
   
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      console.log(`${operationName} attempt ${attempt + 1}/${maxRetries + 1}`);
-      
       // Progressive timeout: 8s, 12s, 15s (more lenient than before)
       const timeoutMs = 8000 + (attempt * 4000);
       const timeoutPromise = new Promise<never>((_, reject) => {
@@ -204,33 +197,26 @@ export async function retrySupabaseOperation<T>(
       });
       
       const result = await Promise.race([operation(), timeoutPromise]);
-      console.log(`${operationName} succeeded on attempt ${attempt + 1}`);
       return result;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error('Unknown error');
       
-      console.log(`${operationName} attempt ${attempt + 1} failed:`, lastError.message);
-      
       if (attempt === maxRetries) {
-        console.log(`All ${operationName} attempts exhausted`);
         throw lastError;
       }
       
       // Check if it's a table doesn't exist error (non-retryable)
       if (lastError.message.includes('relation "users" does not exist') || 
           lastError.message.includes('does not exist')) {
-        console.log('Table does not exist, not retrying');
         throw lastError;
       }
       
       // Check if it's a non-retryable error
       if (!isRetryableError(error)) {
-        console.log('Non-retryable error, stopping retries');
         throw lastError;
       }
       
       const delay = getBackoffDelay(attempt, baseDelay);
-      console.log(`Retrying ${operationName} after ${delay}ms delay`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }

@@ -20,8 +20,6 @@ export function useTabSwitchRecovery({
 
   // Nuclear option: reload the page
   const reloadPage = useCallback(() => {
-    console.error('🚨 NUCLEAR OPTION: Reloading page due to persistent loading state bug');
-    
     if (onRecoveryAttempt) {
       onRecoveryAttempt('page-reload');
     }
@@ -49,14 +47,9 @@ export function useTabSwitchRecovery({
       const timeSinceVisible = Date.now() - lastTabVisibleTime.current;
       
       if (timeSinceVisible > maxStuckTime && !recoveryAttempted.current) {
-        console.error(
-          `🚨 STUCK LOADING DETECTED: ${loadingTexts.length} loading elements stuck for ${timeSinceVisible}ms`
-        );
-        
         recoveryAttempted.current = true;
         
         if (reloadAsLastResort) {
-          console.log('💣 Initiating nuclear option: page reload');
           reloadPage();
         } else if (onRecoveryAttempt) {
           onRecoveryAttempt('stuck-detection');
@@ -74,12 +67,10 @@ export function useTabSwitchRecovery({
 
     if (document.hidden) {
       wasHidden.current = true;
-      console.log('🙈 Tab hidden - marking for recovery monitoring');
     } else {
       lastTabVisibleTime.current = Date.now();
       
       if (wasHidden.current) {
-        console.log('👀 Tab visible again - starting stuck state monitoring');
         wasHidden.current = false;
         recoveryAttempted.current = false;
         
@@ -104,7 +95,6 @@ export function useTabSwitchRecovery({
   // Handle window focus (additional safety net)
   const handleFocus = useCallback(() => {
     if (wasHidden.current) {
-      console.log('🎯 Window focused after being hidden - triggering visibility logic');
       handleVisibilityChange();
     }
   }, [handleVisibilityChange]);
@@ -135,7 +125,6 @@ export function useTabSwitchRecovery({
   // Manual recovery trigger
   const triggerRecovery = useCallback((force = false) => {
     if (force || !recoveryAttempted.current) {
-      console.log('🔄 Manual recovery triggered');
       recoveryAttempted.current = true;
       
       if (onRecoveryAttempt) {

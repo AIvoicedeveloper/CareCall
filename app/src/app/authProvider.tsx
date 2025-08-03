@@ -2,8 +2,6 @@
 
 import { createContext, useContext, useEffect, useState, useRef, useCallback } from "react";
 import { supabase, isSupabaseAvailable } from "./supabaseClient";
-import { diagnoseSupabaseConnection } from "../lib/supabaseDiagnostics";
-import { quickConnectionTest } from "../lib/quickConnectionTest";
 import { retryWithBackoff, isRetryableError, getAdaptiveTimeout, retrySupabaseOperation, testSupabaseConnectivity } from "../lib/connectionUtils";
 import { fetchUserRoleWithFallback } from "../lib/fetchRole";
 
@@ -24,23 +22,15 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 async function fetchUserRole(userId: string, roleCache: React.MutableRefObject<Map<string, { role: string; timestamp: number }>>): Promise<string> {
   try {
-    console.log('🔍 Starting role fetch for userId:', userId);
-    
     // Check cache first (temporarily disabled to test Edge Function)
     const cached = roleCache.current.get(userId);
     if (cached && Date.now() - cached.timestamp < 300000) { // 5 minute cache
-      console.log('✅ Using cached role:', cached.role);
       // Temporarily clear cache to test Edge Function
       roleCache.current.delete(userId);
-      console.log('🔄 Cache cleared, will fetch fresh role from Edge Function');
     }
-    
-    console.log('🔍 Using Edge Function to fetch role...');
     
     // Use the Edge Function with fallback
     const { role } = await fetchUserRoleWithFallback(userId);
-    
-    console.log('✅ Role fetched successfully:', role);
     
     // Cache the successful result
     roleCache.current.set(userId, { role, timestamp: Date.now() });
@@ -57,8 +47,6 @@ async function fetchUserRole(userId: string, roleCache: React.MutableRefObject<M
 // Helper function to determine role from metadata
 async function determineRoleFromMetadata(userId: string, roleCache: React.MutableRefObject<Map<string, { role: string; timestamp: number }>>): Promise<string> {
   try {
-    console.log('🔄 Attempting fallback role determination...');
-    
     if (!supabase) {
       return 'staff';
     }
@@ -71,12 +59,9 @@ async function determineRoleFromMetadata(userId: string, roleCache: React.Mutabl
       const email = user.email?.toLowerCase() || '';
       const metadata = user.user_metadata || {};
       
-      console.log('🔍 Checking user metadata:', { email, metadata });
-      
       // Simple role determination logic
       if (email.includes('admin') || email.includes('administrator') || 
           metadata.role === 'admin' || metadata.role === 'administrator') {
-        console.log('✅ Determined admin role from email/metadata');
         const role = 'admin';
         roleCache.current.set(userId, { role, timestamp: Date.now() });
         return role;
@@ -84,14 +69,12 @@ async function determineRoleFromMetadata(userId: string, roleCache: React.Mutabl
       
       if (email.includes('doctor') || email.includes('physician') || 
           metadata.role === 'doctor' || metadata.role === 'physician') {
-        console.log('✅ Determined doctor role from email/metadata');
         const role = 'doctor';
         roleCache.current.set(userId, { role, timestamp: Date.now() });
         return role;
       }
     }
     
-    console.log('✅ Using default staff role');
     const role = 'staff';
     roleCache.current.set(userId, { role, timestamp: Date.now() });
     return role;
@@ -117,33 +100,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const checkAuthState = useCallback(async () => {
     // Prevent multiple simultaneous auth checks
     if (isCheckingAuth.current) {
-      console.log('Auth check already in progress, skipping...');
       return;
     }
     
     // Prevent too frequent auth checks (debounce)
     const now = Date.now();
     if (now - lastAuthCheck.current < 2000) { // Increased debounce to 2 seconds
-      console.log('Auth check too recent, skipping...');
       return;
     }
     
     // If there's already a pending auth check, wait for it
     if (authStatePromise.current) {
-      console.log('Waiting for existing auth check to complete...');
       await authStatePromise.current;
       return;
     }
     
     isCheckingAuth.current = true;
     lastAuthCheck.current = now;
-    console.log('Checking auth state...');
     
     // Create a promise for this auth check
     authStatePromise.current = (async () => {
       try {
         if (!supabase) {
-          console.log('Supabase not configured, skipping auth check');
           setUser(null);
           setLoading(false);
           return;
@@ -154,8 +132,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         
         try {
           sessionResult = await retrySupabaseOperation(async () => {
-            console.log('Session check attempt');
-            
             if (!supabase) {
               throw new Error('Supabase not configured');
             }
@@ -168,8 +144,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             
             return { data, error: null };
           }, 'Session check', 1, 1000); // 1 retry, 1s base delay
-          
-          console.log('Session check result:', { session: !!sessionResult.data.session, error: sessionResult.error });
         } catch (error) {
           console.error('Session check failed:', error);
           // Assume no session if all attempts fail
@@ -186,11 +160,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
         
         if (sessionResult?.data.session?.user) {
-          console.log('User found, fetching role...');
-          
           try {
             const role = await fetchUserRole(sessionResult.data.session.user.id, roleCache);
-            console.log('Role fetched:', role);
             setUser({
               id: sessionResult.data.session.user.id,
               email: sessionResult.data.session.user.email ?? '',
@@ -206,7 +177,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             });
           }
         } else {
-          console.log('No session found, setting user to null');
           setUser(null);
         }
       } catch (error) {
@@ -214,7 +184,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // In case of timeout or error, assume no user is logged in
         setUser(null);
       } finally {
-        console.log('Setting loading to false');
+
         setLoading(false);
         isCheckingAuth.current = false;
         authStatePromise.current = null;
@@ -227,35 +197,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Handle visibility change and focus events with improved logic
   const handleVisibilityChange = useCallback(() => {
     if (typeof document !== 'undefined' && !document.hidden) {
-      console.log('Tab became visible, checking if auth recheck is needed...');
-      
       // Only recheck if not currently loading and it's been a while
       const now = Date.now();
       if (!isCheckingAuth.current && !loading && (now - lastAuthCheck.current > 15000)) { // Increased to 15 seconds
-        console.log('Tab became visible, rechecking auth state...');
         checkAuthState();
-      } else {
-        console.log('Skipping auth recheck - too recent, already loading, or already checking');
       }
     }
   }, [loading, checkAuthState]);
 
   const handleFocus = useCallback(() => {
-    console.log('Window focused, checking if auth recheck is needed...');
-    
     // Only recheck if not currently loading and it's been a while
     const now = Date.now();
     if (!isCheckingAuth.current && !loading && (now - lastAuthCheck.current > 10000)) { // Increased to 10 seconds
-      console.log('Window focused, rechecking auth state...');
       checkAuthState();
-    } else {
-      console.log('Skipping auth recheck - too recent, already loading, or already checking');
     }
   }, [loading, checkAuthState]);
 
   // Force auth check on network recovery
   const handleOnline = useCallback(() => {
-    console.log('Network connection restored, checking auth state...');
     if (!isCheckingAuth.current && !loading) {
       checkAuthState();
     }
@@ -270,27 +229,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    console.log('Setting up auth provider...');
-
     // Initialize auth provider with improved flow
     const initializeAuth = async () => {
       try {
         // Set up auth state listener
         const { data: listener } = supabase!.auth.onAuthStateChange(async (event, session) => {
-          console.log('Auth state changed:', event, session?.user?.email);
-          
           // Only handle specific auth events
           if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') {
             if (session?.user) {
               try {
                 const role = await fetchUserRole(session.user.id, roleCache);
-                console.log('Role fetched:', role);
                 const userWithRole = {
                   id: session.user.id,
                   email: session.user.email ?? '',
                   role,
                 };
-                console.log('✅ Setting user with role:', userWithRole);
                 setUser(userWithRole);
               } catch (roleError) {
                 console.error('Role fetch failed, using default role:', roleError);
@@ -300,7 +253,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   email: session.user.email ?? '',
                   role: 'staff',
                 };
-                console.log('✅ Setting user with default role:', userWithDefaultRole);
                 setUser(userWithDefaultRole);
               }
             } else {
@@ -317,14 +269,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         
         // Mark as initialized
         isInitialized.current = true;
-        console.log('Auth provider initialized');
+
         
       } catch (error) {
         console.error('Auth initialization error:', error);
         // Force initialization even if everything fails
         setLoading(false);
         isInitialized.current = true;
-        console.log('Auth provider initialized (fallback mode)');
+
       }
     };
 

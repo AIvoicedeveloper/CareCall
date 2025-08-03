@@ -27,12 +27,8 @@ export function useLoadingTimeout({
     loadingStartTime.current = Date.now();
     isMonitoring.current = true;
 
-    console.log('⏱️ Starting loading timeout monitoring...');
-
     timeoutRef.current = setTimeout(() => {
       if (isMonitoring.current) {
-        console.error('🚨 Loading timeout detected! Forcing loading state reset...');
-        
         // Force reset loading states
         if (forceResetLoadingStates) {
           forceResetLoadingStates();
@@ -57,7 +53,6 @@ export function useLoadingTimeout({
     
     if (isMonitoring.current) {
       const duration = loadingStartTime.current ? Date.now() - loadingStartTime.current : 0;
-      console.log(`✅ Loading completed in ${duration}ms`);
     }
     
     isMonitoring.current = false;
@@ -71,8 +66,6 @@ export function useLoadingTimeout({
         const duration = loadingStartTime.current ? Date.now() - loadingStartTime.current : 0;
         
         if (duration > 5000) { // If loading for more than 5 seconds
-          console.warn('🔄 Tab became visible with long-running loading state. Forcing reset...');
-          
           if (forceResetLoadingStates) {
             forceResetLoadingStates();
           }

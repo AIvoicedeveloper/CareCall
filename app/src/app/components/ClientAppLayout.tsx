@@ -2,7 +2,7 @@
 import { useAuth } from "../authProvider";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
-import DebugPanel from "../../components/DebugPanel";
+
 
 export default function ClientAppLayout({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -24,7 +24,7 @@ export default function ClientAppLayout({ children }: { children: React.ReactNod
         <Topbar />
         <main className="flex-1 p-6 bg-gray-50">{children}</main>
       </div>
-      <DebugPanel />
+
     </div>
   );
 } 

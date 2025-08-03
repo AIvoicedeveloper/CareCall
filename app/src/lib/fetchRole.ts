@@ -34,8 +34,7 @@ export const fetchUserRole = async (userId: string): Promise<{ role: string }> =
   try {
     const functionUrl = getEdgeFunctionUrl();
     
-    console.log('🔍 Calling fetch-role Edge Function:', functionUrl);
-    console.log('🔍 User ID being sent:', userId);
+
     
     const response = await fetch(functionUrl, {
       method: 'POST',
@@ -51,7 +50,6 @@ export const fetchUserRole = async (userId: string): Promise<{ role: string }> =
     }
 
     const data = await response.json();
-    console.log('✅ Role fetched successfully:', data);
     
     return data;
   } catch (error) {
@@ -70,7 +68,6 @@ export const fetchUserRoleWithFallback = async (userId: string): Promise<{ role:
     // First try the Edge Function
     return await fetchUserRole(userId);
   } catch (error) {
-    console.warn('⚠️ Edge Function failed, falling back to direct Supabase query:', error);
     
     // Fallback to direct Supabase query
     if (!supabase) {
