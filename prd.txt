@@ -1,81 +1,243 @@
-# Prompt
+# CareCall - Healthcare Follow-up System
 
-Create a Next.js application using TypeScript that connects to an existing Supabase database. The database schema is already set up (provided separately) and includes four main tables: `users`, `patients`, `calls`, and `symptom_reports`.
+## Overview
+A Next.js 15.4.1 application built with TypeScript that connects to a Supabase database for managing healthcare patient follow-ups. The application provides a comprehensive dashboard for medical staff to track patient calls, manage alerts, and maintain patient records.
 
-This app is a web UI for a healthcare follow-up system. It should contain the following pages:
+## Technology Stack
 
----
+### Core Technologies
+- **Next.js**: 15.4.1 with App Router
+- **React**: 19.1.0
+- **TypeScript**: Full type safety across the application
+- **Supabase**: Database and authentication backend
+- **TailwindCSS**: 4.x for styling
+- **Material-UI**: @mui/material and @mui/icons-material for UI components
 
-## `/dashboard`: Follow-up Overview
+### Development Tools
+- **ESLint**: Code linting and formatting
+- **Jest**: Testing framework with React Testing Library
+- **Chart.js**: Data visualization for call volume charts
 
-Display:
-- Recent calls (latest 10), showing patient name, call time, risk level, and status
-- Upcoming follow-ups: patients with no recent call in the past X days
-- Statistics summary: number of calls, number escalated, average risk level
-- (Optional) Simple chart visualizing call volume over time
+## Database Schema
 
-Use components from a modern dashboard UI library such as `@mui/material` or `chakra-ui`.
+### Core Tables
+1. **users** - Staff authentication and role management
+2. **patients** - Patient information and contact details
+3. **calls** - Call history and status tracking
+4. **symptom_reports** - Risk assessment and escalation tracking
 
----
+### Database Relationships
+- Patients are assigned to doctors (users with doctor role)
+- Calls are linked to patients
+- Symptom reports are linked to patients and calls
+- Role-based access control through user roles
 
-## `/alerts`: High-Risk Cases
+## Application Architecture
 
-Display:
-- All `symptom_reports` where `risk_level = 'high'` or `escalate = true`
-- Include patient name, reported symptoms, call date, and notes
-- Allow filtering by date or escalation status
-- Use a clean, readable table layout
+### Authentication & Authorization
+- **Supabase Auth**: Email/password authentication
+- **Role-based Access Control**: admin, doctor, staff roles
+- **Protected Routes**: Automatic redirection based on user role
+- **Session Management**: Persistent authentication with auto-refresh
 
-This page is used by medical staff to triage and prioritize follow-up actions.
+### State Management
+- **React Context**: AuthProvider for user state management
+- **Local State**: Component-level state with React hooks
+- **Error Boundaries**: Comprehensive error handling and recovery
 
----
+### Data Fetching
+- **Supabase Client**: Direct database queries with real-time capabilities
+- **Connection Resilience**: Automatic retry with exponential backoff
+- **Loading States**: Comprehensive loading and error state management
+- **Tab Switch Recovery**: Advanced recovery mechanisms for browser tab switching
 
-## `/patients/[id]`: Patient Profile
+## Page Structure & Features
 
-Dynamic route to show:
-- Patient info: full name, condition type, assigned doctor
-- Call history: list of past calls with status, summary, and transcript
-- Symptom history: timeline or list of symptoms reported per call
-- Consider using tabs or cards to separate sections
+### `/` - Landing Page
+- **Authentication**: Sign-in form with email/password
+- **Error Handling**: Comprehensive error display and recovery
+- **Loading States**: Proper loading indicators during authentication
 
-Fetch data from `patients`, `calls`, and `symptom_reports` tables. Ensure proper loading states and error handling.
+### `/dashboard` - Follow-up Overview
+**Features:**
+- **Recent Calls Table**: Latest 10 calls with patient name, call time, and status
+- **Upcoming Follow-ups**: Patients requiring follow-up calls
+- **Statistics Summary**: Call counts, escalation numbers, average risk levels
+- **Call Volume Chart**: Visual representation of call activity over time
+- **Real-time Updates**: Automatic data refresh and recovery mechanisms
 
----
+**Technical Implementation:**
+- Chart.js integration for data visualization
+- Advanced loading timeout handling (12-second timeout)
+- Tab switch recovery with multiple fallback mechanisms
+- Visibility/focus event handling for data refresh
 
-## `/settings`: Templates & Rules
+### `/alerts` - High-Risk Cases
+**Features:**
+- **Escalated Reports Table**: All symptom reports marked for escalation
+- **Patient Information**: Patient names and risk levels
+- **Direct Navigation**: Links to patient profiles
+- **Filtering**: By escalation status and date
 
-Admin-only page to manage:
-- Call script templates (can be static JSON or loaded from DB later)
-- Scheduling configuration: follow-up intervals, available days/times
-- Escalation rules: define what symptoms or risk levels should trigger `escalate = true`
+**Technical Implementation:**
+- Joins with calls and patients tables
+- Null safety checks for data integrity
+- Responsive table layout with Material-UI components
 
-Use simple form components for this page. No need to implement persistence yet — placeholder UI is sufficient.
+### `/patients` - Patient Management
+**Features:**
+- **Patient List**: Comprehensive table with all patient information
+- **Add Patient**: Modal dialog for creating new patient records
+- **Edit Patient**: Inline editing with form validation
+- **Delete Patient**: Confirmation dialog with safety checks
+- **Role-based Access**: Different permissions for admin, doctor, staff
 
----
+**Technical Implementation:**
+- Material-UI Dialog components for CRUD operations
+- Form validation with error handling
+- Country code selection for phone numbers
+- Doctor assignment functionality
 
-## Tech Notes
+### `/patients/[id]` - Patient Profile
+**Features:**
+- **Patient Information**: Complete patient details and contact info
+- **Call History**: Chronological list of all patient calls
+- **Call Status Tracking**: Current status of follow-up calls
+- **Responsive Design**: Mobile-friendly layout
 
-- Use Supabase client library (`@supabase/supabase-js`) to fetch data
-- Ensure strong typing with TypeScript across the entire project
-- Use a modern dashboard layout with sidebar navigation and topbar
-- Use TailwindCSS or another clean, consistent styling system
-- Protect PHI:
-  - Do not log any sensitive data
-  - Limit data access based on user role (e.g. `doctor`, `admin`, `staff`)
-  - Use access-controlled API calls or Supabase RLS where possible
+**Technical Implementation:**
+- Dynamic routing with Next.js App Router
+- Data fetching with abort signal support
+- Loading states and error handling
+- Visibility/focus event handling for data refresh
 
----
+### `/settings` - Admin Configuration
+**Features:**
+- **Admin-only Access**: Protected route requiring admin role
+- **Placeholder UI**: Ready for future template and rule management
+- **Role-based Protection**: Automatic redirection for non-admin users
 
-## Roles
+## User Roles & Permissions
 
-Use Supabase Auth to manage the following roles:
-- `admin`: full access to all pages and settings
-- `doctor`: view only their assigned patients
-- `staff`: view dashboard and alerts, but not `/settings`
+### Admin Role
+- **Full Access**: All pages and features
+- **Settings Management**: Template and rule configuration
+- **Patient Management**: Full CRUD operations on patients
+- **System Configuration**: Database and application settings
 
----
+### Doctor Role
+- **Patient Access**: View and manage assigned patients
+- **Call Management**: Track and update call statuses
+- **Alert Review**: Access to high-risk case alerts
+- **Dashboard Access**: View call statistics and trends
 
-## Final Output
+### Staff Role
+- **Limited Access**: Dashboard and alerts only
+- **Read-only**: View patient information without editing
+- **Call Tracking**: Monitor call status and progress
+- **Alert Monitoring**: Review escalated cases
 
-The result should be a production-ready scaffolded app that connects to the existing Supabase instance, supports navigation across all four pages, and demonstrates good UX/UI practices with full TypeScript coverage and basic PHI compliance.
+## Advanced Features
+
+### Error Handling & Recovery
+- **Error Boundaries**: Component-level error isolation
+- **Connection Resilience**: Automatic retry with exponential backoff
+- **Loading Timeouts**: 12-second timeout with force reset
+- **Tab Switch Recovery**: Multiple recovery mechanisms for browser tab switching
+- **Nuclear Option**: Page reload as last resort for stuck states
+
+### Performance Optimizations
+- **Connection Pooling**: Efficient Supabase client management
+- **Request Cancellation**: Abort signals for pending requests
+- **Caching**: Role-based caching with 5-minute TTL
+- **Lazy Loading**: Component-level code splitting
+
+### Security Features
+- **PHI Protection**: No sensitive data logging
+- **Role-based Access**: Database-level row security
+- **Input Validation**: Comprehensive form validation
+- **XSS Protection**: Sanitized data rendering
+
+### Accessibility
+- **ARIA Labels**: Comprehensive screen reader support
+- **Keyboard Navigation**: Full keyboard accessibility
+- **Focus Management**: Proper focus handling in modals
+- **Color Contrast**: WCAG compliant color schemes
+
+## Development Setup
+
+### Prerequisites
+- Node.js 18+ 
+- npm or yarn package manager
+- Supabase project with configured database
+
+### Environment Configuration
+Create `.env.local` in the app directory:
+```
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+### Installation & Running
+```bash
+cd app
+npm install --legacy-peer-deps
+npm run dev
+```
+
+### Testing
+```bash
+npm test                    # Run all tests
+npm run test:watch         # Watch mode
+npm run test:coverage      # Coverage report
+```
+
+## Production Deployment
+
+### Build Process
+```bash
+npm run build
+npm start
+```
+
+### Environment Variables
+- Supabase URL and API keys
+- Role-based access configuration
+- Error reporting settings
+
+### Monitoring
+- Console error tracking
+- Performance monitoring
+- User session analytics
+
+## Future Enhancements
+
+### Planned Features
+- **Call Script Templates**: Admin-configurable call scripts
+- **Scheduling System**: Automated follow-up scheduling
+- **Escalation Rules**: Configurable risk assessment rules
+- **Real-time Notifications**: WebSocket-based alerts
+- **Advanced Analytics**: Detailed reporting and insights
+
+### Technical Improvements
+- **Edge Functions**: Serverless API endpoints
+- **Real-time Subscriptions**: Live data updates
+- **Offline Support**: Progressive Web App features
+- **Mobile App**: React Native companion app
+
+## Troubleshooting
+
+### Common Issues
+1. **Environment Variables**: Ensure `.env.local` is properly configured
+2. **Database Connection**: Verify Supabase project settings
+3. **Role Assignment**: Check user role in Supabase dashboard
+4. **Tab Switch Bugs**: Use debug panel for recovery testing
+
+### Debug Tools
+- **Debug Panel**: Development-only testing tools
+- **Console Logging**: Comprehensive error tracking
+- **Network Monitoring**: Request/response logging
+- **State Inspection**: Component state debugging
+
+This application provides a production-ready healthcare follow-up system with comprehensive error handling, role-based access control, and advanced recovery mechanisms for optimal user experience.
 
