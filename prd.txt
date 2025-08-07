@@ -22,9 +22,14 @@ A Next.js 15.4.1 application built with TypeScript that connects to a Supabase d
 
 ### Core Tables
 1. **users** - Staff authentication and role management
-2. **patients** - Patient information and contact details
-3. **calls** - Call history and status tracking
+2. **patients** - Patient information and contact details (no call_time field)
+3. **calls** - Call history and status tracking (contains call_time when calls are made, no auto-creation)
 4. **symptom_reports** - Risk assessment and escalation tracking
+
+### Important Database Rules
+- **No Automatic Call Creation**: Patient creation should NOT automatically create call records
+- **Manual Call Creation**: Call records should only be created when actual calls are made
+- **No Default call_time**: The calls table should not have a default value for call_time
 
 ### Database Relationships
 - Patients are assigned to doctors (users with doctor role)
@@ -232,6 +237,7 @@ npm start
 2. **Database Connection**: Verify Supabase project settings
 3. **Role Assignment**: Check user role in Supabase dashboard
 4. **Tab Switch Bugs**: Use debug panel for recovery testing
+5. **Automatic Call Creation**: If call records are created automatically when adding patients, check for database triggers and remove them
 
 ### Debug Tools
 - **Debug Panel**: Development-only testing tools
