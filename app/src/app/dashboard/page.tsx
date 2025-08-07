@@ -98,114 +98,7 @@ export default function DashboardPage() {
   stopLoadingTimeoutRef.current = stopLoadingTimeout;
 
 
-  // Function to create test data with different call times (for demonstration)
-  const createTestData = useCallback(async () => {
-    if (!supabase) return;
-    
-    try {
-      // Create test patients if they don't exist
-      const { data: existingPatients } = await supabase
-        .from("patients")
-        .select("id, full_name")
-        .in("full_name", ["John Doe", "Kelly Smith", "Détár Imre", "Kelly Sparks"]);
-      
-      if (!existingPatients || existingPatients.length === 0) {
-        console.log("No test patients found, creating them...");
-        const { data: newPatients, error: patientError } = await supabase
-          .from("patients")
-          .insert([
-            { 
-              full_name: "John Doe", 
-              phone_number: "+1234567890", 
-              condition_type: "Hypertension",
-              last_visit: "2025-08-04",
-              doctor_id: null // Will be set by admin later
-            },
-            { 
-              full_name: "Kelly Smith", 
-              phone_number: "+1234567891", 
-              condition_type: "Diabetes",
-              last_visit: "2025-08-04",
-              doctor_id: null
-            },
-            { 
-              full_name: "Détár Imre", 
-              phone_number: "+1234567892", 
-              condition_type: "Cardiac",
-              last_visit: "2025-08-04",
-              doctor_id: null
-            },
-            { 
-              full_name: "Kelly Sparks", 
-              phone_number: "+1234567893", 
-              condition_type: "Respiratory",
-              last_visit: "2025-08-05",
-              doctor_id: null
-            }
-          ])
-          .select();
-        
-        if (patientError) {
-          console.error("Error creating test patients:", patientError);
-          return;
-        }
-        
-        console.log("Created test patients (without call_time):", newPatients);
-      }
-      
-      // Only create calls if we have patients
-      const patientsToUse = existingPatients || [];
-      if (patientsToUse.length === 0) {
-        console.log("No patients available to create calls for");
-        return;
-      }
-      
-      // Create test calls with different timestamps (separate from patient creation)
-      const now = new Date();
-      const testCalls = [
-        {
-          patient_id: patientsToUse[0]?.id,
-          call_time: new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString(), // 2 hours ago
-          call_status: "success",
-          notes: "Patient reported feeling better"
-        },
-        {
-          patient_id: patientsToUse[1]?.id, 
-          call_time: new Date(now.getTime() - 4 * 60 * 60 * 1000).toISOString(), // 4 hours ago
-          call_status: "success",
-          notes: "Follow-up scheduled"
-        },
-        {
-          patient_id: patientsToUse[2]?.id,
-          call_time: new Date(now.getTime() - 6 * 60 * 60 * 1000).toISOString(), // 6 hours ago
-          call_status: "success", 
-          notes: "Medication adjusted"
-        },
-        {
-          patient_id: patientsToUse[3]?.id,
-          call_time: new Date(now.getTime() - 8 * 60 * 60 * 1000).toISOString(), // 8 hours ago
-          call_status: "success",
-          notes: "Symptoms improved"
-        }
-      ].filter(call => call.patient_id); // Only include calls with valid patient IDs
-      
-      if (testCalls.length > 0) {
-        const { data: newCalls, error: callError } = await supabase
-          .from("calls")
-          .insert(testCalls)
-          .select();
-        
-        if (callError) {
-          console.error("Error creating test calls:", callError);
-          return;
-        }
-        
-        console.log("Created test calls with different timestamps:", newCalls);
-      }
-    } catch (error) {
-      console.error("Error creating test data:", error);
-    }
-  }, [supabase]);
+
 
   // Reset all states when user changes
   const resetStates = useCallback(() => {
@@ -239,6 +132,7 @@ export default function DashboardPage() {
       const fetchPromise = supabase
         .from("calls")
         .select("id, patient_id, call_time, call_status, patients(full_name)")
+        .in("call_status", ["success", "failed"])
         .order("call_time", { ascending: false })
         .limit(10);
       
@@ -522,21 +416,6 @@ export default function DashboardPage() {
       <div>
         <div className="flex justify-between items-center mb-4">
           <h1 className="text-2xl font-bold">Dashboard</h1>
-                  <div className="flex gap-2">
-          <button
-            onClick={fetchAllData}
-            className="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
-          >
-            Refresh Data
-          </button>
-          <button
-            onClick={createTestData}
-            className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
-            title="Creates test patients (without call_time) and sample calls with different timestamps"
-          >
-            Create Test Data
-          </button>
-        </div>
         </div>
         <section className="mb-8">
           <h2 className="text-xl font-semibold mb-2">Recent Calls</h2>
@@ -619,14 +498,23 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {upcoming.map((p) => (
-                    <tr key={p.id} className="border-t">
-                      <td className="p-2">{p.full_name}</td>
-                      <td className="p-2">{p.last_visit}</td>
-                      <td className="p-2">{p.condition_type}</td>
-                      <td className="p-2">{p.call_status}</td>
-                    </tr>
-                  ))}
+                                     {upcoming.map((p) => (
+                     <tr key={p.id} className="border-t">
+                       <td className="p-2">{p.full_name}</td>
+                       <td className="p-2">{p.last_visit}</td>
+                       <td className="p-2">{p.condition_type}</td>
+                       <td className="p-2">
+                         <span className={`px-2 py-1 rounded text-xs font-medium ${
+                           p.call_status === 'to be called' ? 'bg-yellow-100 text-yellow-800' :
+                           p.call_status === 'success' ? 'bg-green-100 text-green-800' :
+                           p.call_status === 'failed' ? 'bg-red-100 text-red-800' :
+                           'bg-gray-100 text-gray-800'
+                         }`}>
+                           {p.call_status}
+                         </span>
+                       </td>
+                     </tr>
+                   ))}
                 </tbody>
               </table>
             )}

@@ -13,6 +13,7 @@ interface Patient {
   last_visit: string;
   condition_type: string;
   doctor_id: string;
+  doctor_name?: string;
 }
 
 interface Call {
@@ -49,7 +50,15 @@ export default function PatientProfilePage() {
     try {
       const { data: patientData, error: patientError } = await supabase
         .from("patients")
-        .select("id, full_name, phone_number, last_visit, condition_type, doctor_id")
+        .select(`
+          id, 
+          full_name, 
+          phone_number, 
+          last_visit, 
+          condition_type, 
+          doctor_id,
+          users!patients_doctor_id_fkey(name)
+        `)
         .eq("id", id)
         .single();
       
@@ -59,7 +68,12 @@ export default function PatientProfilePage() {
         return;
       }
       
-      setPatient(patientData as Patient);
+      // Transform the data to include doctor name
+      const patientWithDoctorName = {
+        ...patientData,
+        doctor_name: patientData.users?.name || 'Unassigned'
+      };
+      setPatient(patientWithDoctorName as Patient);
       
       // Fetch call history
       const { data: callData, error: callError } = await supabase
@@ -138,8 +152,16 @@ export default function PatientProfilePage() {
               <h2 className="text-xl font-semibold mb-2">{patient.full_name}</h2>
               <div><b>Phone:</b> {patient.phone_number}</div>
               <div><b>Last Visit:</b> {patient.last_visit}</div>
-              <div><b>Condition:</b> {patient.condition_type}</div>
-              <div><b>Doctor ID:</b> {patient.doctor_id}</div>
+              <div><b>Condition:</b> 
+                <span className="px-2 py-1 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                  {patient.condition_type}
+                </span>
+              </div>
+              <div><b>Doctor:</b> 
+                <span className="px-2 py-1 rounded text-xs font-medium bg-purple-100 text-purple-800">
+                  {patient.doctor_name}
+                </span>
+              </div>
             </div>
             <div className="mb-6 p-4 bg-white rounded shadow">
               <h2 className="text-xl font-semibold mb-2">Call History</h2>
@@ -154,12 +176,45 @@ export default function PatientProfilePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {calls.map((call) => (
-                      <tr key={call.id} className="border-t">
-                        <td className="p-2">{new Date(call.call_time).toLocaleString()}</td>
-                        <td className="p-2">{call.call_status}</td>
-                      </tr>
-                    ))}
+                    {calls.map((call) => {
+                      // Only show call time if it's a valid date (not null/empty)
+                      const callTime = call.call_time ? new Date(call.call_time) : null;
+                      const isValidCallTime = callTime && callTime.getTime() > 0 && callTime.getFullYear() > 1970;
+                      
+                      // Calculate scheduled call time: one day after last visit at 8:00 AM
+                      const lastVisitDate = patient.last_visit ? new Date(patient.last_visit) : null;
+                      let scheduledCallTime = null;
+                      
+                      if (lastVisitDate && !isValidCallTime) {
+                        // Add one day to the last visit date and set time to 8:00 AM
+                        scheduledCallTime = new Date(lastVisitDate);
+                        scheduledCallTime.setDate(scheduledCallTime.getDate() + 1);
+                        scheduledCallTime.setHours(8, 0, 0, 0);
+                      }
+                      
+                      return (
+                        <tr key={call.id} className="border-t">
+                          <td className="p-2">
+                            {isValidCallTime 
+                              ? callTime.toLocaleString() 
+                              : scheduledCallTime 
+                                ? `Scheduled: ${scheduledCallTime.toLocaleDateString()} ${scheduledCallTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`
+                                : 'Not scheduled'
+                            }
+                          </td>
+                          <td className="p-2">
+                          <span className={`px-2 py-1 rounded text-xs font-medium ${
+                            call.call_status === 'success' ? 'bg-green-100 text-green-800' :
+                            call.call_status === 'failed' ? 'bg-red-100 text-red-800' :
+                            call.call_status === 'to be called' ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-gray-100 text-gray-800'
+                          }`}>
+                            {call.call_status}
+                          </span>
+                        </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
